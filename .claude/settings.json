@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "project-world": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "server/node_modules/tsx/dist/cli.mjs",
+        "server/src/bin/mcp-stdio.ts"
+      ]
+    }
+  }
+}

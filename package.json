@@ -1,0 +1,23 @@
+{
+  "name": "project-world",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @project-world/server dev",
+    "dev:web": "pnpm --filter @project-world/web dev",
+    "dev:all": "pnpm -r --parallel run dev",
+    "test": "pnpm --filter @project-world/server test",
+    "verify": "pnpm --filter @project-world/server verify",
+    "mcp:stdio": "pnpm --filter @project-world/server mcp:stdio",
+    "seed": "pnpm --filter @project-world/server seed",
+    "pull:github": "pnpm --filter @project-world/server pull:github",
+    "discover:github": "pnpm --filter @project-world/server discover:github",
+    "db:push": "supabase db push",
+    "db:seed": "pnpm seed"
+  }
+}

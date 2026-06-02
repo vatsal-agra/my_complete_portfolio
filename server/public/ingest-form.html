@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>project world &middot; ingest</title>
+  <style>
+    :root {
+      --bg: #faf8f4;
+      --ink: #1d1d1f;
+      --muted: #6b6b73;
+      --line: #e0dcd2;
+      --accent: #2d4a3e;
+      --error: #a83232;
+      --ok: #2f6f4a;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: ui-serif, Georgia, 'Iowan Old Style', serif; }
+    main { max-width: 560px; margin: 4rem auto; padding: 0 1.25rem; }
+    h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 0.25rem; }
+    .sub { color: var(--muted); font-size: 0.875rem; margin: 0 0 2rem; }
+    label { display: block; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 1.1rem 0 0.35rem; }
+    input, select, textarea, button {
+      font: inherit;
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 4px;
+      color: var(--ink);
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 4.5rem; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    button.primary {
+      margin-top: 1.5rem;
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.75rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 4px;
+      letter-spacing: 0.02em;
+    }
+    button.primary:hover { opacity: 0.92; }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .out { margin-top: 1.5rem; padding: 1rem; background: white; border: 1px solid var(--line); border-radius: 4px; font-family: ui-monospace, monospace; font-size: 0.78rem; white-space: pre-wrap; max-height: 30vh; overflow: auto; }
+    .out.error { border-color: var(--error); color: var(--error); }
+    .out.ok { border-color: var(--ok); color: var(--ok); }
+    .token-row { display: flex; gap: 0.5rem; align-items: stretch; }
+    .token-row input { flex: 1; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    .token-row button {
+      background: none;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      padding: 0 0.85rem;
+      cursor: pointer;
+      width: auto;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      margin: 0;
+    }
+    .token-row button:hover { color: var(--ink); }
+    @media (max-width: 480px) {
+      .row { grid-template-columns: 1fr; }
+      main { margin: 1.5rem auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>project world &middot; ingest</h1>
+    <p class="sub">Append an event. Token persists in <code>localStorage</code>.</p>
+
+    <label for="token">Ingest token</label>
+    <div class="token-row">
+      <input id="token" type="password" autocomplete="off" placeholder="paste INGEST_TOKEN" />
+      <button type="button" id="clear-token">forget</button>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="project">Project (slug or name)</label>
+        <input id="project" type="text" placeholder="mockmate" required />
+      </div>
+      <div>
+        <label for="type">Type</label>
+        <select id="type" required>
+          <option value="progress">progress</option>
+          <option value="decision">decision</option>
+          <option value="blocker">blocker</option>
+          <option value="spend">spend</option>
+          <option value="next_step">next_step</option>
+          <option value="milestone">milestone</option>
+          <option value="metric">metric</option>
+          <option value="status_change">status_change</option>
+          <option value="note">note</option>
+        </select>
+      </div>
+    </div>
+
+    <label for="summary">Summary</label>
+    <input id="summary" type="text" placeholder="One-line human-readable" required />
+
+    <label for="payload">Payload (optional JSON)</label>
+    <textarea id="payload" placeholder='{"amount": 14.00, "currency": "USD"}'></textarea>
+
+    <button type="button" id="submit" class="primary">Append event</button>
+
+    <div id="out" class="out" hidden></div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const tokenEl = $('token');
+    const out = $('out');
+
+    tokenEl.value = localStorage.getItem('pw_ingest_token') || '';
+    tokenEl.addEventListener('change', () => {
+      localStorage.setItem('pw_ingest_token', tokenEl.value.trim());
+    });
+    $('clear-token').addEventListener('click', () => {
+      localStorage.removeItem('pw_ingest_token');
+      tokenEl.value = '';
+    });
+
+    $('submit').addEventListener('click', async () => {
+      out.hidden = false;
+      out.className = 'out';
+      out.textContent = 'sending...';
+
+      const token = tokenEl.value.trim();
+      if (!token) { out.className = 'out error'; out.textContent = 'missing ingest token'; return; }
+
+      let payload;
+      const raw = $('payload').value.trim();
+      if (raw) {
+        try { payload = JSON.parse(raw); }
+        catch (e) { out.className = 'out error'; out.textContent = 'payload is not valid JSON'; return; }
+      }
+
+      const body = {
+        project: $('project').value.trim(),
+        type: $('type').value,
+        summary: $('summary').value.trim(),
+        source: 'manual',
+      };
+      if (payload !== undefined) body.payload = payload;
+
+      try {
+        const res = await fetch('/ingest', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        out.className = res.ok ? 'out ok' : 'out error';
+        try { out.textContent = JSON.stringify(JSON.parse(text), null, 2); }
+        catch { out.textContent = text; }
+        if (res.ok) {
+          localStorage.setItem('pw_ingest_token', token);
+          $('summary').value = '';
+          $('payload').value = '';
+        }
+      } catch (err) {
+        out.className = 'out error';
+        out.textContent = 'network error: ' + (err && err.message ? err.message : String(err));
+      }
+    });
+  </script>
+</body>
+</html>
