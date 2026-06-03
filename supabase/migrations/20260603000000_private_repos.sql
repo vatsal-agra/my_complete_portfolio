@@ -1,0 +1,87 @@
+-- ============================================================================
+-- Project World — private repos (post-spec enhancement)
+-- ============================================================================
+-- GitHub discovery can now import PRIVATE repos (when a token with `repo`
+-- scope is present). They must appear in the owner's world but NEVER leak to
+-- the public/anon projection. This adds a `private` flag and rebuilds the
+-- views so the public view filters private projects out entirely and does not
+-- expose the column.
+-- ============================================================================
+
+alter table projects
+  add column private boolean not null default false;
+
+-- Rebuild both views (Postgres needs drop + recreate when the column list
+-- changes). project_state surfaces `private` for the owner; public_project_state
+-- excludes private rows and omits the column.
+drop view if exists public_project_state;
+drop view if exists project_state;
+
+create view project_state as
+select
+  p.id,
+  p.slug,
+  p.name,
+  p.category,
+  p.goal,
+  p.repo,
+  p.live_url,
+  p.tech_stack,
+  p.stage,
+  p.private,
+  p.manual_position,
+  p.created_at,
+  agg.last_activity_ts,
+  case
+    when p.repo is null then 'seedling'::project_status
+    when agg.last_non_manual_ts is null
+         and p.created_at > now() - interval '3 days'
+      then 'seedling'::project_status
+    when agg.last_activity_ts > now() - interval '7 days'  then 'thriving'::project_status
+    when agg.last_activity_ts > now() - interval '14 days' then 'active'::project_status
+    else 'dormant'::project_status
+  end as status,
+  agg.next_step,
+  coalesce(agg.commits_30d, 0) as commits_30d
+from projects p
+left join lateral (
+  select
+    max(e.ts)                                       as last_activity_ts,
+    max(e.ts) filter (where e.source <> 'manual')   as last_non_manual_ts,
+    (
+      select e2.summary
+      from events e2
+      where e2.project_id = p.id and e2.type = 'next_step'
+      order by e2.ts desc
+      limit 1
+    )                                               as next_step,
+    count(*) filter (
+      where e.type = 'github_commit' and e.ts > now() - interval '30 days'
+    )                                               as commits_30d
+  from events e
+  where e.project_id = p.id
+) agg on true
+where not p.archived;
+
+-- Public projection — EXCLUDES private projects and omits the `private` column.
+create view public_project_state
+  with (security_invoker = false)
+  as
+select
+  slug,
+  name,
+  category,
+  goal,
+  repo,
+  live_url,
+  tech_stack,
+  stage,
+  status,
+  last_activity_ts,
+  created_at,
+  commits_30d
+from project_state
+where not private;
+
+grant select on public_project_state to anon;
+revoke select on project_state from anon;

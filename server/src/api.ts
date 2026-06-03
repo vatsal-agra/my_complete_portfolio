@@ -153,3 +153,16 @@ api.post('/pull/github/discover', async (c) => {
     return c.json({ error: 'discover_failed', detail: err instanceof Error ? err.message : String(err) }, 500)
   }
 })
+
+// Full sync on demand: discover new repos + pull commits/releases. Same work
+// the background scheduler does, exposed for a manual kick.
+api.post('/pull/github/sync', async (c) => {
+  const { runGithubSync } = await import('./github.js')
+  try {
+    const summary = await runGithubSync()
+    return c.json(summary)
+  } catch (err) {
+    console.error('github sync failed', err)
+    return c.json({ error: 'sync_failed', detail: err instanceof Error ? err.message : String(err) }, 500)
+  }
+})

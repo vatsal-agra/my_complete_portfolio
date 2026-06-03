@@ -1,8 +1,18 @@
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 import { config as loadEnv } from 'dotenv'
 import { z } from 'zod'
 
-// Look for .env.local in cwd first, then one level up.
-// Covers both `pnpm dev` from root and from server/.
+// Resolve .env.local relative to THIS file's location, not the cwd, so the
+// stdio MCP server works when launched from any directory (e.g. a different
+// Claude Code session or a Windsurf project on the same machine). dotenv does
+// not override already-set keys, so the repo-anchored paths take precedence
+// and the cwd-relative paths below remain a fallback for local `pnpm dev`.
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../')
+loadEnv({ path: resolve(repoRoot, '.env.local') })
+loadEnv({ path: resolve(repoRoot, 'server/.env.local') })
+
+// Fallbacks: cwd-relative (covers `pnpm dev` from root or from server/).
 loadEnv({ path: '.env.local' })
 loadEnv({ path: '../.env.local' })
 
@@ -13,6 +23,9 @@ const Env = z.object({
   INGEST_TOKEN: z.string().min(32),
   GITHUB_TOKEN: z.string().optional().default(''),
   GITHUB_USERNAME: z.string().default('vatsal-agra'),
+  // Auto-sync cadence in minutes (0 = disabled). Only actually runs when a
+  // GITHUB_TOKEN is present, to avoid hammering the 60-req/hr anon rate limit.
+  GITHUB_SYNC_MINUTES: z.coerce.number().int().nonnegative().default(30),
   PORT: z.coerce.number().int().positive().default(8787),
 })
 

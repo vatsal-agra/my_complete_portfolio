@@ -3,38 +3,46 @@
  * distance and height now encode different signals).
  *
  *   distance from center  ← how recently the project was touched
- *   height of the spire   ← how big the project is (commits / events)
+ *   height of the spire   ← how BIG the project is (lines of code in the repo)
  *   status (color, glow)  ← visual flair only
  */
 
 /**
- * Per-project commit count (and total event count) at a given point in time.
- * Used by both the height calculation and the position calculation.
+ * Per-project signals at a given point in time, used by the height calc.
  */
 export interface ProjectActivity {
   commits: number
   totalEvents: number
+  /** Total bytes of code in the repo (sum of GitHub language byte counts).
+   *  When present this drives height — a huge codebase is tall even if it was
+   *  only committed twice. Recorded by the GitHub sync as a code_bytes metric. */
+  codeBytes?: number
 }
 
 /**
- * Spire height in world units. Sqrt-curve growth so adding the 11th commit
- * has a smaller visible effect than adding the 2nd — but every commit count
- * lands on a unique height (no buckets, no rounding).
+ * Spire height in world units.
  *
- * Overall scale bumped ~1.55× so the world reads as a real skyline:
- * - 0 events  → 1.10u   (just-imported baseline)
- * - 1 event   → 2.25u
- * - 7 commits → 3.94u
- * - 14 commits→ 5.01u
- * - 30 commits→ 6.75u
- * - 100+      → ~9.8u   (clamped so giant repos don't break the camera)
+ * PRIMARY signal is code size (bytes of source across all languages ≈ how much
+ * code actually lives in the repo). Log-scaled so a 10 MB monolith doesn't
+ * dwarf everything, but a big codebase clearly towers over a tiny one:
+ * - ~5 KB    → ~2.0u
+ * - ~50 KB   → ~3.7u
+ * - ~500 KB  → ~5.4u
+ * - ~5 MB    → ~7.1u
+ * - ~50 MB+  → ~8.8u (clamped at 9.8 so giants don't break the camera)
  *
- * Commits are the primary signal; for projects without a GitHub repo, total
- * event count is the fallback so an algoviz with 5 manual updates is still
- * visibly bigger than an algoviz with 0.
+ * Fallback (no code size yet — e.g. a manual project with no repo, or before
+ * the first GitHub sync records it): the old commit/event-count curve, so the
+ * spire still reflects *some* activity instead of collapsing to the floor.
  */
 export function computeHeight(activity: ProjectActivity): number {
-  const { commits, totalEvents } = activity
+  const { commits, totalEvents, codeBytes } = activity
+
+  if (codeBytes && codeBytes > 0) {
+    const h = 1.25 + (Math.log10(codeBytes) - 3) * 1.7
+    return Math.max(1.2, Math.min(9.8, h))
+  }
+
   const effective = commits > 0 ? commits : totalEvents
   if (effective === 0) return 1.10
   return 1.25 + Math.min(8.55, Math.sqrt(effective) * 1.00)

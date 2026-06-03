@@ -27,6 +27,7 @@ interface ProjectPullResult {
   repo: string | null
   commits_added: number
   releases_added: number
+  code_bytes?: number
   live_check?: { up: boolean; changed: boolean }
   error?: string
 }
@@ -87,13 +88,17 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
   const username = env.GITHUB_USERNAME
   if (!username) throw new Error('GITHUB_USERNAME not set')
 
+  // With a token we hit the authenticated endpoint, which returns PRIVATE repos
+  // too (visibility=all). Without one we can only see public repos via the
+  // public users endpoint.
+  const authed = Boolean(env.GITHUB_TOKEN)
   const repos: GitHubRepoListing[] = []
   let page = 1
   while (page < 10) {  // hard cap at 1000 repos
-    const res = await fetch(
-      `https://api.github.com/users/${username}/repos?per_page=100&page=${page}&type=owner&sort=pushed`,
-      { headers: GITHUB_HEADERS },
-    )
+    const url = authed
+      ? `https://api.github.com/user/repos?per_page=100&page=${page}&affiliation=owner&visibility=all&sort=pushed`
+      : `https://api.github.com/users/${username}/repos?per_page=100&page=${page}&type=owner&sort=pushed`
+    const res = await fetch(url, { headers: GITHUB_HEADERS })
     if (!res.ok) throw new Error(`list repos ${username}: ${res.status} ${await res.text()}`)
     const batch = (await res.json()) as GitHubRepoListing[]
     repos.push(...batch)
@@ -112,7 +117,6 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
 
   for (const repo of repos) {
     if (repo.fork)       { skipped.push({ repo: repo.full_name, reason: 'fork' });     continue }
-    if (repo.private)    { skipped.push({ repo: repo.full_name, reason: 'private' });  continue }
     if (repo.name.toLowerCase() === username.toLowerCase()) {
       skipped.push({ repo: repo.full_name, reason: 'profile README repo' })
       continue
@@ -139,6 +143,7 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
       live_url: validUrl(repo.homepage),
       tech_stack: techStack,
       archived: repo.archived,
+      private: repo.private,  // hidden from the public/recruiter view (see migration)
     }
     const { error } = await supabase.from('projects').insert(insert)
     if (error) {
@@ -150,6 +155,24 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
   }
 
   return { ok: true, username, scanned: repos.length, created, skipped }
+}
+
+export interface SyncSummary {
+  ok: true
+  discover: DiscoverySummary
+  pull: PullSummary
+}
+
+/**
+ * One full sync pass: discover brings in any NEW repos (incl. private when a
+ * token is present), then the pull backfills new commits/releases for every
+ * tracked repo. Used by the on-startup + interval scheduler and the manual
+ * /api/pull/github/sync endpoint.
+ */
+export async function runGithubSync(): Promise<SyncSummary> {
+  const discover = await discoverRepos()
+  const pull = await runGithubPull()
+  return { ok: true, discover, pull }
 }
 
 function slugify(input: string): string {
@@ -232,6 +255,28 @@ export async function runGithubPull(): Promise<PullSummary> {
           })
           result.releases_added++
         }
+
+        // Code size — sum of language bytes ≈ how much code actually lives in
+        // the repo's files. A far better "how big is this project" signal than
+        // commit count (a huge codebase committed twice should still be tall).
+        // Recorded as a metric event, timestamped at the last commit so it
+        // doesn't distort recency. Only re-recorded when the size changes.
+        const codeBytes = await fetchCodeBytes(p.repo)
+        if (codeBytes !== null && codeBytes > 0) {
+          const prev = await lastCodeBytes(p.id)
+          if (prev !== codeBytes) {
+            const ts = commits[0]?.commit?.author?.date
+            await ingest({
+              project: p.slug,
+              type: 'metric',
+              summary: `code size ${Math.round(codeBytes / 1024)} KB`,
+              payload: { name: 'code_bytes', value: codeBytes, unit: 'bytes' },
+              source: 'github',
+              ...(ts ? { ts } : {}),
+            })
+            result.code_bytes = codeBytes
+          }
+        }
       }
 
       // Live URL ping
@@ -277,6 +322,33 @@ async function fetchReleases(repo: string): Promise<GitHubRelease[]> {
     throw new Error(`GET releases ${repo}: ${res.status}`)
   }
   return (await res.json()) as GitHubRelease[]
+}
+
+/** Total bytes of code across all languages GitHub detected in the repo. */
+async function fetchCodeBytes(repo: string): Promise<number | null> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/languages`, { headers: GITHUB_HEADERS })
+  if (!res.ok) {
+    if (res.status === 404) return null
+    throw new Error(`GET languages ${repo}: ${res.status}`)
+  }
+  const langs = (await res.json()) as Record<string, number>
+  return Object.values(langs).reduce((a, b) => a + b, 0)
+}
+
+/** Latest recorded code_bytes for a project, for change-detection (dedup). */
+async function lastCodeBytes(projectId: string): Promise<number | null> {
+  const { data } = await supabase
+    .from('events')
+    .select('payload')
+    .eq('project_id', projectId)
+    .eq('type', 'metric')
+    .order('ts', { ascending: false })
+    .limit(50)
+  for (const row of (data ?? []) as Array<Pick<EventRow, 'payload'>>) {
+    const p = row.payload as { name?: string; value?: number }
+    if (p.name === 'code_bytes' && typeof p.value === 'number') return p.value
+  }
+  return null
 }
 
 async function fetchExistingShas(projectId: string): Promise<Set<string>> {

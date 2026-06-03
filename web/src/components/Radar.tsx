@@ -10,14 +10,15 @@
  */
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
-import { regionMeta } from '../lib/regions'
+import { STAGE_COLOR } from './House3D'
+import type { ProjectStage } from '../lib/types'
 
 export interface RadarItem {
   slug: string
   name: string
   x: number
   z: number
-  category: string
+  stage: ProjectStage
 }
 
 const SIZE = 150
@@ -98,7 +99,7 @@ export function Radar({
               cx={dx}
               cy={dy}
               r={dim ? 1.8 : 2.8}
-              fill={regionMeta(it.category).color}
+              fill={STAGE_COLOR[it.stage] ?? STAGE_COLOR.wip}
               opacity={dim ? 0.25 : 1}
               className="radar-dot"
               onClick={() => onFocus(it.slug)}

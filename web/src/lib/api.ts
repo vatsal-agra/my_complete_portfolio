@@ -1,6 +1,6 @@
 import { getToken, clearToken } from './auth'
 import type {
-  ProjectState, ProjectDetail, ProjectEvent, NewProjectInput,
+  ProjectState, ProjectDetail, ProjectEvent, NewProjectInput, ProjectStage,
   WorldSpendRow, RecentEvent,
   PublicProjectState, PublicProjectDetail, PublicEvent,
 } from './types'
@@ -45,7 +45,7 @@ export const api = {
   recentEvents: (limit = 20) => call<RecentEvent[]>(`/api/events/recent?limit=${limit}`),
   createProject: (input: NewProjectInput) =>
     call<ProjectState>('/api/project', { method: 'POST', body: JSON.stringify(input) }),
-  patchProject: (slug: string, patch: Partial<NewProjectInput & { archived: boolean; manual_position: { x: number; y: number } | null }>) =>
+  patchProject: (slug: string, patch: Partial<NewProjectInput & { stage: ProjectStage; archived: boolean; manual_position: { x: number; y: number } | null }>) =>
     call<ProjectState>(`/api/project/${encodeURIComponent(slug)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   triggerGithubPull: () => call<{ ok: true; scanned: number; results: unknown[] }>('/api/pull/github', { method: 'POST' }),
   ingest: (body: { project: string; type: string; summary: string; payload?: Record<string, unknown>; source?: string }) =>

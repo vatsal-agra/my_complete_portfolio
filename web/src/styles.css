@@ -1411,6 +1411,29 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
   margin-left: 0.1rem;
 }
 
+/* ---- Stage editor (project screen, right panel) ---- */
+.eco-stage-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+.eco-stage-btn {
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  background: transparent;
+  border: 1.5px solid currentColor;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
+}
+.eco-stage-btn:hover:not(:disabled) { transform: translateY(-1px); opacity: 0.9; }
+.eco-stage-btn.active { box-shadow: 0 0 12px -2px currentColor; }
+.eco-stage-btn:disabled { cursor: default; opacity: 0.7; }
+
 /* ---- Search bar (top-centre) ---- */
 .search-bar {
   position: fixed;
@@ -1467,8 +1490,9 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
 /* ---- Radar / minimap (bottom-left) ---- */
 .radar {
   position: fixed;
-  left: 1.1rem;
-  bottom: 1.1rem;
+  left: 1.25rem;
+  top: 3.6rem;        /* under the "project world" title; clear of the bottom
+                         spend panel + full-width scrubber */
   z-index: 11;
   width: 150px;
   height: 150px;

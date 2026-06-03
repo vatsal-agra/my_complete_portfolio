@@ -14,7 +14,7 @@ import * as THREE from 'three'
 import { groundYAt } from '../lib/globe'
 
 const BASE_HEIGHT = 0.16  // keep in sync with House3D
-const DURATION = 1.3      // seconds, sky → impact
+const DURATION = 2.6      // seconds, sky → impact (slower, more graceful fall)
 
 export interface MeteorSpec {
   id: number

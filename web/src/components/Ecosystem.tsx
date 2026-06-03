@@ -20,12 +20,23 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import { buildBranches, type Branch } from '../lib/ecosystem-data'
 import { relativeTime, formatTimestamp } from '../lib/time'
-import type { ProjectDetail, ProjectState, ProjectEvent } from '../lib/types'
+import { STAGE_COLOR } from './House3D'
+import type { ProjectDetail, ProjectState, ProjectEvent, ProjectStage } from '../lib/types'
 
 interface Props {
   project: ProjectState
   onClose: () => void
+  /** Called after an owner edit (e.g. stage change) so World3D can update the
+   *  spire colour live without waiting for the next poll. */
+  onUpdated?: (p: ProjectState) => void
 }
+
+const STAGES: { key: ProjectStage; label: string }[] = [
+  { key: 'idea',     label: 'Idea' },
+  { key: 'wip',      label: 'WIP' },
+  { key: 'shipped',  label: 'Shipped' },
+  { key: 'archived', label: 'Archived' },
+]
 
 // SVG geometry. Bumped up so headers, leaves, and the core all render large.
 const R_HEADER = 205
@@ -71,7 +82,7 @@ function polar(angle: number, r: number): { x: number; y: number } {
   return { x: Math.cos(angle) * r, y: -Math.sin(angle) * r }
 }
 
-export function Ecosystem({ project, onClose }: Props) {
+export function Ecosystem({ project, onClose, onUpdated }: Props) {
   const [detail, setDetail] = useState<ProjectDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -256,7 +267,7 @@ export function Ecosystem({ project, onClose }: Props) {
 
       {/* RIGHT — vitals / stats */}
       <aside className="eco-side eco-right">
-        <StatsDashboard detail={detail} project={project} />
+        <StatsDashboard detail={detail} project={project} onUpdated={onUpdated} />
       </aside>
     </div>
   )
@@ -293,13 +304,61 @@ function ActivityTimeline({ detail, err }: { detail: ProjectDetail | null; err: 
   )
 }
 
-function StatsDashboard({ detail, project }: { detail: ProjectDetail | null; project: ProjectState }) {
+function StageEditor({ project, onUpdated }: { project: ProjectState; onUpdated?: (p: ProjectState) => void }) {
+  const [stage, setStage] = useState<ProjectStage>(project.stage)
+  const [saving, setSaving] = useState<ProjectStage | null>(null)
+  const [err, setErr] = useState(false)
+
+  // Keep in sync if the project prop changes (e.g. a poll refresh).
+  useEffect(() => { setStage(project.stage) }, [project.stage])
+
+  const choose = async (next: ProjectStage) => {
+    if (next === stage || saving) return
+    setSaving(next); setErr(false)
+    const prev = stage
+    setStage(next)  // optimistic
+    try {
+      const updated = await api.patchProject(project.slug, { stage: next })
+      onUpdated?.(updated)
+    } catch {
+      setStage(prev); setErr(true)  // revert on failure
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <div className="eco-stat-block">
+      <div className="eco-stat-block-label">stage{err ? ' · save failed' : ''}</div>
+      <div className="eco-stage-row">
+        {STAGES.map((s) => {
+          const active = s.key === stage
+          const color = STAGE_COLOR[s.key]
+          return (
+            <button
+              key={s.key}
+              className={`eco-stage-btn${active ? ' active' : ''}`}
+              style={active ? { background: color, borderColor: color, color: '#11131f' } : { borderColor: color, color }}
+              onClick={() => void choose(s.key)}
+              disabled={saving !== null}
+            >
+              {saving === s.key ? '…' : s.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function StatsDashboard({ detail, project, onUpdated }: { detail: ProjectDetail | null; project: ProjectState; onUpdated?: (p: ProjectState) => void }) {
   if (!detail) {
     return (
       <>
         <div className="eco-side-head">
           <div className="eco-side-label">vitals</div>
         </div>
+        <StageEditor project={project} onUpdated={onUpdated} />
         <div className="eco-side-empty">scanning…</div>
       </>
     )
@@ -321,6 +380,8 @@ function StatsDashboard({ detail, project }: { detail: ProjectDetail | null; pro
         <div className="eco-side-label">vitals</div>
         <div className="eco-side-sub">{project.repo ?? 'no repo'}</div>
       </div>
+
+      <StageEditor project={project} onUpdated={onUpdated} />
 
       <div className="eco-stat-grid">
         <BigStat value={allCommits} label="commits" />

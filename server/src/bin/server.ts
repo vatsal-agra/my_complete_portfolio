@@ -21,4 +21,45 @@ server.listen(env.PORT, () => {
   console.log(`  GET  /ingest-form  (fallback web form)`)
   console.log(`  GET  /healthz`)
   console.log(`  ANY  /mcp          (MCP Streamable HTTP, auth: Bearer ...)`)
+  startGithubSyncScheduler()
 })
+
+/**
+ * Background GitHub sync: every GITHUB_SYNC_MINUTES, discover new repos and
+ * pull new commits/releases so the world updates itself without manual runs.
+ * Disabled unless a GITHUB_TOKEN is set (anon rate limits make polling 17+
+ * repos every half hour impractical). An in-flight guard prevents overlap.
+ */
+function startGithubSyncScheduler(): void {
+  const minutes = env.GITHUB_SYNC_MINUTES
+  if (minutes <= 0) {
+    console.log('  ⏸ github auto-sync disabled (GITHUB_SYNC_MINUTES=0)')
+    return
+  }
+  if (!env.GITHUB_TOKEN) {
+    console.log('  ⏸ github auto-sync idle — set GITHUB_TOKEN (repo scope) to enable')
+    return
+  }
+
+  let running = false
+  const runOnce = async (trigger: string) => {
+    if (running) return
+    running = true
+    try {
+      const { runGithubSync } = await import('../github.js')
+      const s = await runGithubSync()
+      const commits = s.pull.results.reduce((n, r) => n + r.commits_added, 0)
+      const releases = s.pull.results.reduce((n, r) => n + r.releases_added, 0)
+      console.log(`  🔄 github sync (${trigger}): +${s.discover.created.length} repos, +${commits} commits, +${releases} releases`)
+    } catch (err) {
+      console.error('  ⚠ github sync failed:', err instanceof Error ? err.message : err)
+    } finally {
+      running = false
+    }
+  }
+
+  console.log(`  🔄 github auto-sync every ${minutes}m`)
+  // First pass shortly after boot, then on the interval.
+  setTimeout(() => void runOnce('startup'), 10_000)
+  setInterval(() => void runOnce('interval'), minutes * 60_000)
+}

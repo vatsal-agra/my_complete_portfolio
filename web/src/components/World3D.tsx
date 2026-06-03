@@ -14,7 +14,6 @@ import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { api } from '../lib/api'
 import { position3DFor } from '../lib/position3d'
-import { computeRegions } from '../lib/regions'
 import { groundYAt } from '../lib/globe'
 import { computeHeight, type ProjectActivity } from '../lib/dimensions'
 import { deriveProjectsAt } from '../lib/derive'
@@ -27,7 +26,6 @@ import { WorldSpend } from './WorldSpend'
 import { Ticker } from './Ticker'
 import { Scrubber } from './Scrubber'
 import { Legend } from './Legend'
-import { RegionTerritories } from './RegionTerritories'
 import { SearchBar } from './SearchBar'
 import { Radar } from './Radar'
 import { Meteors, type MeteorSpec } from './Meteors'
@@ -168,11 +166,11 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
             }), 2600)
             timeouts.push(t)
           }
-          // Prune the meteors once they've finished their ~1.3s fall.
+          // Prune the meteors once they've finished their ~2.6s fall.
           const ids = spawned.map((m) => m.id)
           const tm = setTimeout(() => {
             setMeteors((curr) => curr.filter((m) => !ids.includes(m.id)))
-          }, 1900)
+          }, 3200)
           timeouts.push(tm)
         }
       } catch { /* swallow */ }
@@ -201,31 +199,37 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
   // honest when the scrubber is engaged.
   const projectActivity = useMemo(() => {
     const m = new Map<string, ProjectActivity>()
+    // Track the timestamp of the latest code_bytes metric per project so the
+    // most recent code-size reading wins regardless of event ordering.
+    const codeBytesTs = new Map<string, number>()
     for (const e of events) {
-      if (asOf !== null && Date.parse(e.ts) > asOf) continue
+      const ets = Date.parse(e.ts)
+      if (asOf !== null && ets > asOf) continue
       const cur = m.get(e.project_id) ?? { commits: 0, totalEvents: 0 }
       cur.totalEvents++
       if (e.type === 'github_commit') cur.commits++
+      if (e.type === 'metric') {
+        const p = e.payload as { name?: string; value?: number }
+        if (p.name === 'code_bytes' && typeof p.value === 'number') {
+          const prevTs = codeBytesTs.get(e.project_id) ?? -Infinity
+          if (ets >= prevTs) { codeBytesTs.set(e.project_id, ets); cur.codeBytes = p.value }
+        }
+      }
       m.set(e.project_id, cur)
     }
     return m
   }, [events, asOf])
 
-  // Territories — group projects into angular sectors by category so same-kind
-  // projects cluster into named zones on the globe.
-  const regions = useMemo(() => computeRegions(displayProjects), [displayProjects])
-  const regionList = useMemo(() => [...regions.values()], [regions])
-
-  // Place each project in world XZ — distance is recency-based, bearing comes
-  // from its category territory. Height comes from commits/events.
+  // Place each project in world XZ — distance is recency-based, bearing is a
+  // stable per-slug hash. Height comes from commits/events.
   const positioned = useMemo(
     () => displayProjects.map((p) => {
       const stat = projectActivity.get(p.id) ?? { commits: 0, totalEvents: 0 }
-      const pos = position3DFor(p, asOf ?? Date.now(), regions.get(p.category || 'other'))
+      const pos = position3DFor(p, asOf ?? Date.now())
       const height = computeHeight(stat)
       return { p, x: pos.x, z: pos.z, height }
     }),
-    [displayProjects, projectActivity, asOf, regions],
+    [displayProjects, projectActivity, asOf],
   )
 
   // Active search → set of matching slugs (null = no search, treat all normal).
@@ -234,9 +238,9 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
     return new Set(displayProjects.filter((p) => matchesQuery(p, query)).map((p) => p.slug))
   }, [displayProjects, query])
 
-  // Flat list for the radar minimap.
+  // Flat list for the radar minimap (dots coloured by lifecycle stage).
   const radarItems = useMemo(
-    () => positioned.map(({ p, x, z }) => ({ slug: p.slug, name: p.name, x, z, category: p.category || 'other' })),
+    () => positioned.map(({ p, x, z }) => ({ slug: p.slug, name: p.name, x, z, stage: p.stage })),
     [positioned],
   )
 
@@ -318,7 +322,6 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
           <Scene3D />
         </Suspense>
 
-        <RegionTerritories regions={regionList} dimmed={matchedSlugs !== null} />
         <Meteors meteors={meteors} entries={positioned.map(({ p, x, z, height }) => ({ slug: p.slug, x, z, height }))} />
 
         <OrbitControls
@@ -390,7 +393,11 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
             zIndexRange={[30, 0]}
             style={{ pointerEvents: 'auto' }}
           >
-            <Ecosystem project={selectedEntry.p} onClose={recenter} />
+            <Ecosystem
+              project={selectedEntry.p}
+              onClose={recenter}
+              onUpdated={(p) => setProjects((curr) => curr?.map((x) => (x.id === p.id ? { ...x, ...p } : x)) ?? curr)}
+            />
           </Html>
         )}
       </Canvas>
