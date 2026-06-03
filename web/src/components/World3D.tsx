@@ -13,9 +13,9 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { api } from '../lib/api'
-import { position3DFor } from '../lib/position3d'
+import { position3DFor, relaxPositions } from '../lib/position3d'
 import { groundYAt } from '../lib/globe'
-import { computeHeight, type ProjectActivity } from '../lib/dimensions'
+import { computeHeight, spireRadii, type ProjectActivity } from '../lib/dimensions'
 import { deriveProjectsAt } from '../lib/derive'
 import { Scene3D } from './Scene3D'
 import { House3D, STAGE_COLOR } from './House3D'
@@ -221,16 +221,20 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
   }, [events, asOf])
 
   // Place each project in world XZ — distance is recency-based, bearing is a
-  // stable per-slug hash. Height comes from commits/events.
-  const positioned = useMemo(
-    () => displayProjects.map((p) => {
+  // stable per-slug hash. Height comes from code size. A relaxation pass then
+  // pushes any overlapping spires apart so a crowded world keeps a little gap
+  // between buildings.
+  const positioned = useMemo(() => {
+    const raw = displayProjects.map((p) => {
       const stat = projectActivity.get(p.id) ?? { commits: 0, totalEvents: 0 }
       const pos = position3DFor(p, asOf ?? Date.now())
       const height = computeHeight(stat)
-      return { p, x: pos.x, z: pos.z, height }
-    }),
-    [displayProjects, projectActivity, asOf],
-  )
+      const footprint = spireRadii(height).bottomRadius * 1.6  // matches House3D baseRadius
+      return { p, x: pos.x, z: pos.z, height, footprint, fixed: !!p.manual_position }
+    })
+    const relaxed = relaxPositions(raw, 0.7, 18)
+    return relaxed.map(({ p, x, z, height }) => ({ p, x, z, height }))
+  }, [displayProjects, projectActivity, asOf])
 
   // Active search → set of matching slugs (null = no search, treat all normal).
   const matchedSlugs = useMemo(() => {

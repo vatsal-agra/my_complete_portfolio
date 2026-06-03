@@ -76,3 +76,52 @@ export function position3DFor(
 }
 
 export { R_MIN, R_MAX }
+
+/**
+ * Collision relaxation — nudges overlapping spires apart so a crowded world
+ * keeps at least a small gap between buildings. Distance-from-centre (recency)
+ * is only perturbed locally where things actually overlap, so the overall
+ * "recent = near" reading survives.
+ *
+ * Deterministic (no randomness) so the layout is stable between renders. O(N²)
+ * per iteration, but N is small and this only runs when the project set or
+ * the as-of time changes — not per frame.
+ */
+export interface Placeable {
+  x: number
+  z: number
+  /** Half-width of the building's footprint (plinth radius). */
+  footprint: number
+  /** Manually-placed projects are anchors — never moved, only avoided. */
+  fixed?: boolean
+}
+
+export function relaxPositions<T extends Placeable>(items: T[], gap = 0.7, iterations = 18): T[] {
+  const pts = items.map((i) => ({ ...i }))
+  for (let it = 0; it < iterations; it++) {
+    for (let a = 0; a < pts.length; a++) {
+      for (let b = a + 1; b < pts.length; b++) {
+        const A = pts[a]!, B = pts[b]!
+        let dx = B.x - A.x, dz = B.z - A.z
+        let d = Math.hypot(dx, dz)
+        const minD = A.footprint + B.footprint + gap
+        if (d >= minD) continue
+        if (d < 1e-4) {
+          // Coincident — separate along a deterministic golden-angle bearing.
+          const ang = a * 2.399963229
+          dx = Math.cos(ang); dz = Math.sin(ang); d = 1
+        }
+        const overlap = minD - d
+        const ux = dx / d, uz = dz / d
+        if (A.fixed && B.fixed) continue
+        if (A.fixed) { B.x += ux * overlap; B.z += uz * overlap }
+        else if (B.fixed) { A.x -= ux * overlap; A.z -= uz * overlap }
+        else {
+          A.x -= ux * overlap * 0.5; A.z -= uz * overlap * 0.5
+          B.x += ux * overlap * 0.5; B.z += uz * overlap * 0.5
+        }
+      }
+    }
+  }
+  return pts
+}

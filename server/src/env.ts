@@ -23,9 +23,10 @@ const Env = z.object({
   INGEST_TOKEN: z.string().min(32),
   GITHUB_TOKEN: z.string().optional().default(''),
   GITHUB_USERNAME: z.string().default('vatsal-agra'),
-  // Auto-sync cadence in minutes (0 = disabled). Only actually runs when a
-  // GITHUB_TOKEN is present, to avoid hammering the 60-req/hr anon rate limit.
-  GITHUB_SYNC_MINUTES: z.coerce.number().int().nonnegative().default(30),
+  // Background auto-sync cadence in minutes (0 = disabled). Defaults to daily;
+  // the owner can pull updates on demand via the in-portal Refresh button.
+  // Only runs when a GITHUB_TOKEN is present.
+  GITHUB_SYNC_MINUTES: z.coerce.number().int().nonnegative().default(1440),
   PORT: z.coerce.number().int().positive().default(8787),
 })
 

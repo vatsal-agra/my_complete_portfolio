@@ -48,6 +48,12 @@ export const api = {
   patchProject: (slug: string, patch: Partial<NewProjectInput & { stage: ProjectStage; archived: boolean; manual_position: { x: number; y: number } | null }>) =>
     call<ProjectState>(`/api/project/${encodeURIComponent(slug)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   triggerGithubPull: () => call<{ ok: true; scanned: number; results: unknown[] }>('/api/pull/github', { method: 'POST' }),
+  // Full owner-triggered sync: discover new repos + pull commits/releases/size.
+  triggerGithubSync: () => call<{
+    ok: true
+    discover: { created: unknown[] }
+    pull: { scanned: number; results: Array<{ commits_added: number; releases_added: number; code_bytes?: number }> }
+  }>('/api/pull/github/sync', { method: 'POST' }),
   ingest: (body: { project: string; type: string; summary: string; payload?: Record<string, unknown>; source?: string }) =>
     call<{ event: unknown; project_state: ProjectState | null }>('/ingest', { method: 'POST', body: JSON.stringify({ source: 'manual', ...body }) }),
 }

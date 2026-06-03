@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { api } from '../lib/api'
 import { clearToken } from '../lib/auth'
 
 interface Props {
@@ -9,6 +11,33 @@ interface Props {
 }
 
 export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props) {
+  const [syncing, setSyncing] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+
+  // Owner-only: pull the latest from GitHub on demand (new repos + commits +
+  // releases + code size). The world's 4s poll then reflects it — meteors and
+  // all — within a few seconds.
+  const refresh = async () => {
+    if (syncing) return
+    setSyncing(true); setResult(null)
+    try {
+      const s = await api.triggerGithubSync()
+      const commits = s.pull.results.reduce((n, r) => n + r.commits_added, 0)
+      const releases = s.pull.results.reduce((n, r) => n + r.releases_added, 0)
+      const repos = s.discover.created.length
+      setResult(
+        repos || commits || releases
+          ? `+${repos} repos · +${commits} commits · +${releases} releases`
+          : 'already up to date',
+      )
+    } catch {
+      setResult('sync failed')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setResult(null), 5000)
+    }
+  }
+
   return (
     <>
       <div className="hud hud-tl">
@@ -19,11 +48,18 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
         <button onClick={onAddProject} title="Plant a new project (n)">+ new</button>
         <button onClick={onRecenter} title="Recenter (r)">recenter</button>
         <button
+          onClick={refresh}
+          disabled={syncing}
+          title="Pull the latest from GitHub now"
+          className={syncing ? 'syncing' : ''}
+        >{syncing ? 'syncing…' : '↻ refresh'}</button>
+        <button
           onClick={() => { clearToken(); onLogout() }}
           title="Forget owner token"
           className="ghost"
         >sign out</button>
       </div>
+      {result && <div className="hud-sync-result">{result}</div>}
     </>
   )
 }
