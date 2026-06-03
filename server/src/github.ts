@@ -28,6 +28,8 @@ interface ProjectPullResult {
   commits_added: number
   releases_added: number
   code_bytes?: number
+  goal_set?: boolean
+  stack_added?: number
   live_check?: { up: boolean; changed: boolean }
   error?: string
 }
@@ -133,12 +135,28 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
       slug = `${slugify(repo.name)}-${suffix}`
     }
 
-    const techStack = inferTechStack(repo)
+    // Seed the new project with a full goal + stack from GitHub so it doesn't
+    // land blank. Best-effort: fall back to the cheap listing-derived stack if
+    // the deeper fetch fails.
+    let goal: string | null = repo.description?.trim() || null
+    let techStack = inferTechStack(repo)
+    try {
+      const enr = await computeEnrichment(repo.full_name, {
+        needGoal: !goal,
+        needStack: true,
+        description: repo.description,
+      })
+      if (!goal && enr.goal) goal = enr.goal
+      if (enr.tech_stack?.length) {
+        techStack = dedupeStack([...enr.tech_stack, ...(repo.topics ?? [])]).slice(0, MAX_STACK)
+      }
+    } catch { /* keep the listing-derived fallback */ }
+
     const insert = {
       slug,
       name: repo.name,
       category: 'other' as const,
-      goal: repo.description ?? null,
+      goal,
       repo: repo.full_name,
       live_url: validUrl(repo.homepage),
       tech_stack: techStack,
@@ -198,12 +216,304 @@ function inferTechStack(repo: GitHubRepoListing): string[] {
   return Array.from(stack)
 }
 
+// --- Auto-enrichment of empty owner-facing fields (goal / stack / languages) ---
+//
+// When a project's `goal` or `tech_stack` is empty we fill it from GitHub on the
+// next sync, so towers don't show "— no goal set —" / "— none —". We never touch
+// a field the owner has already populated:
+//   - goal: filled only when null/blank.
+//   - tech_stack: filled when it has ≤1 entry (0 = empty, 1 = the bare
+//     discovery seed of just the primary language → effectively "not set").
+// Languages come straight from GitHub's per-repo language breakdown; the stack
+// (frameworks/tools) is inferred by reading manifest files. Both are merged into
+// `tech_stack` — splitTechStack() on the frontend routes them to the right
+// "languages" / "stack" branches.
+
+const MAX_STACK = 12
+
+/** Manifest filename → framework/tool display names detected from its contents. */
+const MANIFEST_DETECTORS: Array<{ file: string; detect: (text: string) => string[] }> = [
+  { file: 'package.json',     detect: detectPackageJson },
+  { file: 'requirements.txt', detect: detectPython },
+  { file: 'pyproject.toml',   detect: detectPython },
+  { file: 'Pipfile',          detect: detectPython },
+  { file: 'environment.yml',  detect: detectPython },
+  { file: 'go.mod',           detect: detectGoMod },
+  { file: 'Cargo.toml',       detect: detectCargo },
+  { file: 'Gemfile',          detect: detectGemfile },
+  { file: 'composer.json',    detect: detectComposer },
+  { file: 'pubspec.yaml',     detect: () => ['Flutter'] },
+  { file: 'Dockerfile',       detect: () => ['Docker'] },
+  { file: 'docker-compose.yml', detect: () => ['Docker'] },
+]
+
+const PACKAGE_DEP_MAP: Record<string, string> = {
+  'react': 'React', 'react-dom': 'React', 'next': 'Next.js', 'nuxt': 'Nuxt',
+  'vue': 'Vue', 'svelte': 'Svelte', '@sveltejs/kit': 'SvelteKit', 'astro': 'Astro',
+  '@angular/core': 'Angular', 'solid-js': 'Solid', 'preact': 'Preact',
+  'remix': 'Remix', '@remix-run/react': 'Remix',
+  'express': 'Express', 'hono': 'Hono', 'fastify': 'Fastify', 'koa': 'Koa',
+  '@nestjs/core': 'NestJS',
+  'vite': 'Vite', 'webpack': 'Webpack', 'tailwindcss': 'Tailwind CSS',
+  'three': 'Three.js', '@react-three/fiber': 'React Three Fiber',
+  'electron': 'Electron', '@supabase/supabase-js': 'Supabase',
+  'prisma': 'Prisma', '@prisma/client': 'Prisma', 'drizzle-orm': 'Drizzle',
+  'mongoose': 'MongoDB', 'socket.io': 'Socket.IO',
+  'redux': 'Redux', 'zustand': 'Zustand', 'graphql': 'GraphQL',
+  'tensorflow': 'TensorFlow', '@tensorflow/tfjs': 'TensorFlow.js',
+  '@modelcontextprotocol/sdk': 'MCP', 'openai': 'OpenAI', '@anthropic-ai/sdk': 'Anthropic',
+}
+
+export function detectPackageJson(text: string): string[] {
+  let json: { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> }
+  try { json = JSON.parse(text) } catch { return [] }
+  const deps = { ...(json.dependencies ?? {}), ...(json.devDependencies ?? {}) }
+  const out: string[] = []
+  for (const name of Object.keys(deps)) {
+    const mapped = PACKAGE_DEP_MAP[name]
+    if (mapped) out.push(mapped)
+  }
+  return out
+}
+
+/** Substring rules over lowercased manifest text → display names. */
+function matchRules(text: string, rules: Array<[needle: string, name: string]>): string[] {
+  const lower = text.toLowerCase()
+  const out: string[] = []
+  for (const [needle, name] of rules) {
+    if (lower.includes(needle)) out.push(name)
+  }
+  return out
+}
+
+export function detectPython(text: string): string[] {
+  return matchRules(text, [
+    ['fastapi', 'FastAPI'], ['flask', 'Flask'], ['django', 'Django'],
+    ['streamlit', 'Streamlit'], ['gradio', 'Gradio'],
+    ['torch', 'PyTorch'], ['tensorflow', 'TensorFlow'], ['scikit-learn', 'scikit-learn'],
+    ['sklearn', 'scikit-learn'], ['numpy', 'NumPy'], ['pandas', 'Pandas'],
+    ['transformers', 'Hugging Face'], ['langchain', 'LangChain'],
+    ['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['mcp', 'MCP'],
+    ['pygame', 'Pygame'], ['scrapy', 'Scrapy'], ['selenium', 'Selenium'],
+  ])
+}
+
+function detectGoMod(text: string): string[] {
+  return matchRules(text, [
+    ['gin-gonic', 'Gin'], ['gofiber', 'Fiber'], ['labstack/echo', 'Echo'],
+    ['gorilla/mux', 'Gorilla'], ['gorm.io', 'GORM'],
+  ])
+}
+
+function detectCargo(text: string): string[] {
+  return matchRules(text, [
+    ['actix', 'Actix'], ['axum', 'Axum'], ['rocket', 'Rocket'],
+    ['tokio', 'Tokio'], ['bevy', 'Bevy'],
+  ])
+}
+
+function detectGemfile(text: string): string[] {
+  return matchRules(text, [['rails', 'Rails'], ['sinatra', 'Sinatra']])
+}
+
+function detectComposer(text: string): string[] {
+  return matchRules(text, [['laravel', 'Laravel'], ['symfony', 'Symfony']])
+}
+
+/** Case-insensitive dedupe that preserves first-seen display form and order. */
+export function dedupeStack(items: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of items) {
+    const t = raw.trim()
+    if (!t) continue
+    const key = t.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(t)
+  }
+  return out
+}
+
+async function fetchLanguagesMap(repo: string): Promise<Record<string, number> | null> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/languages`, { headers: GITHUB_HEADERS })
+  if (!res.ok) {
+    if (res.status === 404) return null
+    throw new Error(`GET languages ${repo}: ${res.status}`)
+  }
+  return (await res.json()) as Record<string, number>
+}
+
+interface GitHubRepoMeta { description: string | null; homepage: string | null }
+
+async function fetchRepoMeta(repo: string): Promise<GitHubRepoMeta | null> {
+  const res = await fetch(`https://api.github.com/repos/${repo}`, { headers: GITHUB_HEADERS })
+  if (!res.ok) return null
+  const j = (await res.json()) as GitHubRepoMeta
+  return { description: j.description ?? null, homepage: j.homepage ?? null }
+}
+
+const RAW_ACCEPT = 'application/vnd.github.raw'
+
+async function fetchReadme(repo: string): Promise<string | null> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/readme`, {
+    headers: { ...GITHUB_HEADERS, accept: RAW_ACCEPT },
+  })
+  if (!res.ok) return null
+  const text = await res.text()
+  return text.slice(0, 8000)  // first chunk is plenty for a one-line goal
+}
+
+async function listRootFiles(repo: string): Promise<Set<string>> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/contents`, { headers: GITHUB_HEADERS })
+  if (!res.ok) return new Set()
+  const arr = (await res.json()) as Array<{ name: string; type: string }>
+  return new Set(arr.filter((x) => x.type === 'file').map((x) => x.name))
+}
+
+async function fetchTextFile(repo: string, path: string): Promise<string | null> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+    headers: { ...GITHUB_HEADERS, accept: RAW_ACCEPT },
+  })
+  if (!res.ok) return null
+  return await res.text()
+}
+
+/** Read root manifests and detect frameworks/tools present in the repo. */
+async function inferFrameworks(repo: string): Promise<string[]> {
+  const files = await listRootFiles(repo)
+  const found: string[] = []
+  for (const d of MANIFEST_DETECTORS) {
+    if (!files.has(d.file)) continue
+    const text = await fetchTextFile(repo, d.file)
+    if (!text) continue
+    try { found.push(...d.detect(text)) } catch { /* ignore a bad manifest */ }
+  }
+  return found
+}
+
+function cleanInline(s: string): string {
+  return s
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')      // images
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')   // links → text
+    .replace(/[`*_~]/g, '')                     // emphasis / code ticks
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** First meaningful prose line of a README (skips title/badges/HTML/code). */
+export function firstReadmeLine(md: string): string | null {
+  const noComments = md.replace(/<!--[\s\S]*?-->/g, '')
+  const lines = noComments.split(/\r?\n/)
+  let inFence = false
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    if (line.startsWith('```') || line.startsWith('~~~')) { inFence = !inFence; continue }
+    if (inFence) continue
+    if (line.startsWith('<')) continue          // raw HTML (logos, centered divs)
+    if (line.startsWith('![')) continue         // images / badges
+    if (/^[-=*_]{3,}$/.test(line)) continue      // horizontal rule
+    if (line.startsWith('|')) continue           // table row
+    if (line.startsWith('#')) continue           // heading (usually the project name)
+    const s = cleanInline(line.replace(/^[>\-*+]\s+/, ''))
+    if (s.length >= 8) return s
+  }
+  return null
+}
+
+/** Tidy a goal string: collapse whitespace and clamp to one tidy sentence. */
+export function clampGoal(s: string): string {
+  const clean = s.replace(/\s+/g, ' ').trim()
+  if (clean.length <= 200) return clean
+  const cut = clean.slice(0, 200)
+  const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
+  if (lastStop > 80) return cut.slice(0, lastStop + 1)
+  return cut.replace(/\s+\S*$/, '') + '…'
+}
+
+interface EnrichResult { goal?: string; tech_stack?: string[] }
+
+/**
+ * Compute fills for empty fields from GitHub. Only fetches what's needed:
+ * languages+manifests for the stack, description+README for the goal.
+ */
+async function computeEnrichment(
+  repo: string,
+  opts: { needGoal: boolean; needStack: boolean; description?: string | null; langMap?: Record<string, number> | null },
+): Promise<EnrichResult> {
+  const out: EnrichResult = {}
+
+  if (opts.needStack) {
+    const langMap = opts.langMap !== undefined ? opts.langMap : await fetchLanguagesMap(repo)
+    const languages = langMap
+      ? Object.entries(langMap).sort((a, b) => b[1] - a[1]).map(([k]) => k)
+      : []
+    const frameworks = await inferFrameworks(repo)
+    const stack = dedupeStack([...languages, ...frameworks]).slice(0, MAX_STACK)
+    if (stack.length) out.tech_stack = stack
+  }
+
+  if (opts.needGoal) {
+    let description = opts.description
+    if (description === undefined) {
+      const meta = await fetchRepoMeta(repo)
+      description = meta?.description ?? null
+    }
+    let goal = description?.trim() || null
+    if (!goal) {
+      const readme = await fetchReadme(repo)
+      goal = readme ? firstReadmeLine(readme) : null
+    }
+    if (goal) out.goal = clampGoal(goal)
+  }
+
+  return out
+}
+
+interface EnrichableProject {
+  id: string
+  slug: string
+  repo: string | null
+  goal: string | null
+  tech_stack: string[] | null
+}
+
+/** Backfill empty goal/stack for one project during a pull pass. */
+async function enrichEmptyFields(
+  p: EnrichableProject,
+  result: ProjectPullResult,
+  langMap: Record<string, number> | null,
+): Promise<void> {
+  if (!p.repo) return
+  const needGoal = !p.goal || !p.goal.trim()
+  const existingStack = p.tech_stack ?? []
+  const needStack = existingStack.length <= 1
+  if (!needGoal && !needStack) return
+
+  try {
+    const enr = await computeEnrichment(p.repo, { needGoal, needStack, langMap })
+    const patch: { goal?: string; tech_stack?: string[] } = {}
+    if (needGoal && enr.goal) patch.goal = enr.goal
+    if (needStack && enr.tech_stack?.length) {
+      patch.tech_stack = dedupeStack([...existingStack, ...enr.tech_stack]).slice(0, MAX_STACK)
+    }
+    if (Object.keys(patch).length === 0) return
+    const { error } = await supabase.from('projects').update(patch).eq('id', p.id)
+    if (error) return
+    if (patch.goal) result.goal_set = true
+    if (patch.tech_stack) result.stack_added = patch.tech_stack.length
+  } catch {
+    /* enrichment is best-effort; never fail the whole pull over it */
+  }
+}
+
 const PER_REPO_COMMIT_LIMIT = 30
 
 export async function runGithubPull(): Promise<PullSummary> {
   const { data: projects, error } = await supabase
     .from('projects')
-    .select('id, slug, name, repo, live_url, archived')
+    .select('id, slug, name, repo, live_url, archived, goal, tech_stack')
     .eq('archived', false)
     .not('repo', 'is', null)
   if (error) throw new Error(`load projects: ${error.message}`)
@@ -214,6 +524,10 @@ export async function runGithubPull(): Promise<PullSummary> {
     try {
       // Commits
       if (p.repo) {
+        // Languages once per repo — drives both the code-size metric (sum of
+        // bytes) and the languages part of stack enrichment below.
+        const langMap = await fetchLanguagesMap(p.repo)
+
         const commits = await fetchCommits(p.repo)
         const existingShas = await fetchExistingShas(p.id)
         for (const commit of commits) {
@@ -261,7 +575,7 @@ export async function runGithubPull(): Promise<PullSummary> {
         // commit count (a huge codebase committed twice should still be tall).
         // Recorded as a metric event, timestamped at the last commit so it
         // doesn't distort recency. Only re-recorded when the size changes.
-        const codeBytes = await fetchCodeBytes(p.repo)
+        const codeBytes = langMap ? Object.values(langMap).reduce((a, b) => a + b, 0) : null
         if (codeBytes !== null && codeBytes > 0) {
           const prev = await lastCodeBytes(p.id)
           if (prev !== codeBytes) {
@@ -277,6 +591,9 @@ export async function runGithubPull(): Promise<PullSummary> {
             result.code_bytes = codeBytes
           }
         }
+
+        // Backfill empty goal / stack / languages from GitHub (best-effort).
+        await enrichEmptyFields(p, result, langMap)
       }
 
       // Live URL ping
@@ -322,17 +639,6 @@ async function fetchReleases(repo: string): Promise<GitHubRelease[]> {
     throw new Error(`GET releases ${repo}: ${res.status}`)
   }
   return (await res.json()) as GitHubRelease[]
-}
-
-/** Total bytes of code across all languages GitHub detected in the repo. */
-async function fetchCodeBytes(repo: string): Promise<number | null> {
-  const res = await fetch(`https://api.github.com/repos/${repo}/languages`, { headers: GITHUB_HEADERS })
-  if (!res.ok) {
-    if (res.status === 404) return null
-    throw new Error(`GET languages ${repo}: ${res.status}`)
-  }
-  const langs = (await res.json()) as Record<string, number>
-  return Object.values(langs).reduce((a, b) => a + b, 0)
 }
 
 /** Latest recorded code_bytes for a project, for change-detection (dedup). */

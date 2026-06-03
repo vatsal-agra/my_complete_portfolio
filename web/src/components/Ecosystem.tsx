@@ -101,6 +101,11 @@ export function Ecosystem({ project, onClose, onUpdated }: Props) {
     return buildBranches(detail).map((b) => ({ ...b, color: BRANCH_COLOR[b.key] ?? b.color }))
   }, [detail])
 
+  // Patch the loaded detail in place after an owner edit (e.g. goal) so the
+  // mind-map re-renders without a refetch.
+  const patchDetail = (p: Partial<ProjectState>) =>
+    setDetail((d) => (d ? { ...d, project: { ...d.project, ...p } } : d))
+
   return (
     <div className="eco-shell" onClick={(e) => e.stopPropagation()}>
       <button className="ecosystem-close" onClick={onClose} aria-label="close">esc</button>
@@ -267,7 +272,7 @@ export function Ecosystem({ project, onClose, onUpdated }: Props) {
 
       {/* RIGHT — vitals / stats */}
       <aside className="eco-side eco-right">
-        <StatsDashboard detail={detail} project={project} onUpdated={onUpdated} />
+        <StatsDashboard detail={detail} project={project} onUpdated={onUpdated} onGoalSaved={patchDetail} />
       </aside>
     </div>
   )
@@ -351,7 +356,70 @@ function StageEditor({ project, onUpdated }: { project: ProjectState; onUpdated?
   )
 }
 
-function StatsDashboard({ detail, project, onUpdated }: { detail: ProjectDetail | null; project: ProjectState; onUpdated?: (p: ProjectState) => void }) {
+/** Owner-editable north-star goal. Auto-fills from GitHub when left empty, but
+ *  the owner can always override it here. */
+function GoalEditor({
+  project, currentGoal, onUpdated, onGoalSaved,
+}: {
+  project: ProjectState
+  currentGoal: string | null
+  onUpdated?: (p: ProjectState) => void
+  onGoalSaved: (p: Partial<ProjectState>) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState(currentGoal ?? '')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(false)
+
+  // Sync local draft when the project's goal changes underneath us.
+  useEffect(() => { if (!editing) setText(currentGoal ?? '') }, [currentGoal, editing])
+
+  const save = async () => {
+    const next = text.trim()
+    if (next === (currentGoal ?? '').trim()) { setEditing(false); return }
+    setSaving(true); setErr(false)
+    try {
+      const updated = await api.patchProject(project.slug, { goal: next })
+      onGoalSaved({ goal: next || null })
+      onUpdated?.(updated)
+      setEditing(false)
+    } catch {
+      setErr(true)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="eco-stat-block">
+      <div className="eco-stat-block-label">goal{err ? ' · save failed' : ''}</div>
+      {editing ? (
+        <div className="eco-goal-edit">
+          <textarea
+            className="eco-goal-input"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder="the project's north star…"
+            autoFocus
+          />
+          <div className="eco-goal-actions">
+            <button className="eco-goal-btn" onClick={() => { setEditing(false); setText(currentGoal ?? '') }} disabled={saving}>cancel</button>
+            <button className="eco-goal-btn primary" onClick={() => void save()} disabled={saving}>{saving ? 'saving…' : 'save'}</button>
+          </div>
+        </div>
+      ) : (
+        <div className="eco-goal-view">
+          <p className="eco-goal-text">{currentGoal?.trim() || <span className="dim">— no goal set (auto-fills from GitHub) —</span>}</p>
+          <button className="eco-goal-btn" onClick={() => setEditing(true)}>edit</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatsDashboard({ detail, project, onUpdated, onGoalSaved }: { detail: ProjectDetail | null; project: ProjectState; onUpdated?: (p: ProjectState) => void; onGoalSaved: (p: Partial<ProjectState>) => void }) {
   if (!detail) {
     return (
       <>
@@ -382,6 +450,13 @@ function StatsDashboard({ detail, project, onUpdated }: { detail: ProjectDetail 
       </div>
 
       <StageEditor project={project} onUpdated={onUpdated} />
+
+      <GoalEditor
+        project={project}
+        currentGoal={detail.project.goal}
+        onUpdated={onUpdated}
+        onGoalSaved={onGoalSaved}
+      />
 
       <div className="eco-stat-grid">
         <BigStat value={allCommits} label="commits" />

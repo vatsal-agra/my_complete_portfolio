@@ -13,6 +13,8 @@ for (const r of summary.results) {
   const parts = [
     r.commits_added ? `${r.commits_added} commit(s)` : null,
     r.releases_added ? `${r.releases_added} release(s)` : null,
+    r.goal_set ? 'goal set' : null,
+    r.stack_added ? `stack=${r.stack_added}` : null,
     r.live_check ? `live=${r.live_check.up}${r.live_check.changed ? ' (changed)' : ''}` : null,
   ].filter(Boolean)
   console.log(`  ok ${r.slug} (${r.repo}): ${parts.length ? parts.join(', ') : 'no changes'}`)
