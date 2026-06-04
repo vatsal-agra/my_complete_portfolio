@@ -27,6 +27,11 @@ const Env = z.object({
   // the owner can pull updates on demand via the in-portal Refresh button.
   // Only runs when a GITHUB_TOKEN is present.
   GITHUB_SYNC_MINUTES: z.coerce.number().int().nonnegative().default(1440),
+  // Comma-separated list of browser origins allowed to call the API cross-origin
+  // (e.g. "https://your-site.netlify.app"). localhost dev origins are always
+  // allowed. Same-origin requests (the deployed app calling its own /api) don't
+  // need this at all — it only matters for cross-site calls.
+  ALLOWED_ORIGINS: z.string().optional().default(''),
   PORT: z.coerce.number().int().positive().default(8787),
 })
 

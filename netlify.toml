@@ -12,6 +12,9 @@
 # Required env vars (set in Netlify → Site settings → Environment):
 #   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
 #   INGEST_TOKEN, GITHUB_TOKEN, GITHUB_USERNAME
+#   (recommended) ALLOWED_ORIGINS = your deployed URL, e.g.
+#     https://<your-site>.netlify.app  — locks cross-origin API access.
+#     Not strictly required (the app calls its own API same-origin).
 #   (optional) GITHUB_SYNC_MINUTES — ignored in the cloud; the schedule below
 #   drives the cadence, but env.ts still wants it parseable, so leave it unset
 #   to use the default.
