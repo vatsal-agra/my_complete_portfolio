@@ -27,7 +27,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
   return (
     <div className="login-shell">
       <form className="login" onSubmit={submit}>
-        <h1>project world</h1>
+        <h1>Vatsal's Project World</h1>
         <p className="sub">paste your owner token to enter</p>
         <input
           type="password"

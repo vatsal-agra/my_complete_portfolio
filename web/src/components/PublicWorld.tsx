@@ -229,7 +229,7 @@ export function PublicWorld() {
       </Canvas>
 
       <div className="hud hud-tl">
-        <span className="hud-label">project world</span>
+        <span className="hud-label">Vatsal's Project World</span>
         <span className="hud-meta">{positioned.length} projects · public view</span>
       </div>
       <div className="hud hud-tr">

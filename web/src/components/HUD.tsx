@@ -43,7 +43,7 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
   return (
     <>
       <div className="hud hud-tl">
-        <span className="hud-label">project world</span>
+        <span className="hud-label">Vatsal's Project World</span>
         <span className="hud-meta">{count} projects · zoom {scale.toFixed(2)}×</span>
       </div>
       <div className="hud hud-tr">
