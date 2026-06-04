@@ -50,7 +50,7 @@ function startGithubSyncScheduler(): void {
       const s = await runGithubSync()
       const commits = s.pull.results.reduce((n, r) => n + r.commits_added, 0)
       const releases = s.pull.results.reduce((n, r) => n + r.releases_added, 0)
-      console.log(`  🔄 github sync (${trigger}): +${s.discover.created.length} repos, +${commits} commits, +${releases} releases`)
+      console.log(`  🔄 github sync (${trigger}): +${s.discover.created.length} repos, ~${s.discover.updated.length} reconciled, +${commits} commits, +${releases} releases`)
     } catch (err) {
       console.error('  ⚠ github sync failed:', err instanceof Error ? err.message : err)
     } finally {

@@ -51,7 +51,7 @@ export const api = {
   // Full owner-triggered sync: discover new repos + pull commits/releases/size.
   triggerGithubSync: () => call<{
     ok: true
-    discover: { created: unknown[] }
+    discover: { created: unknown[]; updated: unknown[] }
     pull: { scanned: number; results: Array<{ commits_added: number; releases_added: number; code_bytes?: number }> }
   }>('/api/pull/github/sync', { method: 'POST' }),
   ingest: (body: { project: string; type: string; summary: string; payload?: Record<string, unknown>; source?: string }) =>

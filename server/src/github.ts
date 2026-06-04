@@ -78,6 +78,7 @@ interface DiscoverySummary {
   username: string
   scanned: number
   created: Array<{ slug: string; repo: string; name: string }>
+  updated: Array<{ repo: string; changes: string[] }>
   skipped: Array<{ repo: string; reason: string }>
 }
 
@@ -108,13 +109,22 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
     page++
   }
 
-  const { data: existing } = await supabase.from('projects').select('id, repo, slug')
-  const existingRepos = new Set(
-    (existing ?? []).map((p) => (typeof p.repo === 'string' ? p.repo.toLowerCase() : null)).filter(Boolean) as string[],
-  )
+  const { data: existing } = await supabase
+    .from('projects')
+    .select('id, repo, slug, private, archived, name')
+  // Map repo full_name (lowercase) → the stored row, so we can reconcile
+  // already-imported repos when their GitHub state changes (visibility flips,
+  // archive, rename) instead of skipping them outright.
+  const existingByRepo = new Map<string, { id: string; private: boolean; archived: boolean; name: string }>()
+  for (const p of (existing ?? []) as Array<{ id: string; repo: string | null; private: boolean; archived: boolean; name: string }>) {
+    if (typeof p.repo === 'string') {
+      existingByRepo.set(p.repo.toLowerCase(), { id: p.id, private: p.private, archived: p.archived, name: p.name })
+    }
+  }
   const existingSlugs = new Set((existing ?? []).map((p) => p.slug))
 
   const created: DiscoverySummary['created'] = []
+  const updated: DiscoverySummary['updated'] = []
   const skipped: DiscoverySummary['skipped'] = []
 
   for (const repo of repos) {
@@ -123,8 +133,21 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
       skipped.push({ repo: repo.full_name, reason: 'profile README repo' })
       continue
     }
-    if (existingRepos.has(repo.full_name.toLowerCase())) {
-      skipped.push({ repo: repo.full_name, reason: 'already imported' })
+    const prior = existingByRepo.get(repo.full_name.toLowerCase())
+    if (prior) {
+      // Already imported — reconcile GitHub-authoritative fields if they drifted.
+      const patch: Record<string, unknown> = {}
+      const changes: string[] = []
+      if (prior.private !== repo.private)   { patch.private = repo.private;   changes.push(`private→${repo.private}`) }
+      if (prior.archived !== repo.archived) { patch.archived = repo.archived; changes.push(`archived→${repo.archived}`) }
+      if (prior.name !== repo.name)         { patch.name = repo.name;         changes.push('renamed') }
+      if (changes.length > 0) {
+        const { error } = await supabase.from('projects').update(patch).eq('id', prior.id)
+        if (error) skipped.push({ repo: repo.full_name, reason: error.message })
+        else updated.push({ repo: repo.full_name, changes })
+      } else {
+        skipped.push({ repo: repo.full_name, reason: 'already imported' })
+      }
       continue
     }
 
@@ -172,7 +195,7 @@ export async function discoverRepos(): Promise<DiscoverySummary> {
     created.push({ slug, repo: repo.full_name, name: repo.name })
   }
 
-  return { ok: true, username, scanned: repos.length, created, skipped }
+  return { ok: true, username, scanned: repos.length, created, updated, skipped }
 }
 
 export interface SyncSummary {

@@ -25,11 +25,13 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
       const commits = s.pull.results.reduce((n, r) => n + r.commits_added, 0)
       const releases = s.pull.results.reduce((n, r) => n + r.releases_added, 0)
       const repos = s.discover.created.length
-      setResult(
-        repos || commits || releases
-          ? `+${repos} repos · +${commits} commits · +${releases} releases`
-          : 'already up to date',
-      )
+      const reconciled = s.discover.updated.length
+      const parts: string[] = []
+      if (repos) parts.push(`+${repos} new`)
+      if (reconciled) parts.push(`${reconciled} updated`)
+      if (commits) parts.push(`+${commits} commits`)
+      if (releases) parts.push(`+${releases} releases`)
+      setResult(parts.length ? parts.join(' · ') : 'already up to date')
     } catch {
       setResult('sync failed')
     } finally {
