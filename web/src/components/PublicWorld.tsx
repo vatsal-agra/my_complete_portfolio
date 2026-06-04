@@ -65,7 +65,7 @@ export function PublicWorld() {
   const [asOf, setAsOf] = useState<number | null>(null)
   const [camGoal, setCamGoal] = useState<CameraTarget | null>(null)
   const [intro, setIntro] = useState(true)
-  const [lockedToast, setLockedToast] = useState(false)
+  const [lockedNotice, setLockedNotice] = useState(false)
   const controlsRef = useRef<any>(null)
 
   useEffect(() => {
@@ -140,12 +140,12 @@ export function PublicWorld() {
   const focusOn = useCallback((slug: string) => {
     const entry = positioned.find((e) => e.p.slug === slug)
     if (!entry) return
-    // Private tower: don't open it — just flash a small "can't view" alert.
+    // Private tower: don't open it — show the "get in touch" notice instead.
     if (privateSet.has(slug)) {
-      setLockedToast(true)
-      window.setTimeout(() => setLockedToast(false), 2600)
+      setLockedNotice(true)
       return
     }
+    setLockedNotice(false)
     setSelected(slug)
     const surfaceY = groundYAt(entry.x, entry.z)
     const target = new THREE.Vector3(entry.x, surfaceY + entry.height * 0.5 + 1.2, entry.z)
@@ -161,6 +161,7 @@ export function PublicWorld() {
 
   const recenter = useCallback(() => {
     setSelected(null)
+    setLockedNotice(false)
     setCamGoal({ position: DEFAULT_CAM.clone(), target: DEFAULT_TARGET.clone(), ease: 2.2 })
   }, [])
 
@@ -247,9 +248,24 @@ export function PublicWorld() {
 
       {selected && <PublicProjectCard slug={selected} onClose={recenter} />}
 
-      {lockedToast && (
-        <div className="locked-toast">
-          🔒 This one’s private — want a closer look? <strong>Reach out and I’ll walk you through it.</strong>
+      {lockedNotice && (
+        <div className="locked-notice" onClick={(e) => e.stopPropagation()}>
+          <button className="locked-notice-close" onClick={() => setLockedNotice(false)} aria-label="close">esc</button>
+          <div className="locked-notice-icon">🔒</div>
+          <div className="locked-notice-title">This project is private</div>
+          <p className="locked-notice-body">Want a closer look? Get in touch and I’ll happily walk you through it.</p>
+          <div className="locked-notice-actions">
+            <a
+              className="locked-notice-btn locked-notice-li"
+              href="https://www.linkedin.com/in/vatsal-agrawal-a7a9641b0"
+              target="_blank"
+              rel="noreferrer"
+            >in LinkedIn</a>
+            <a
+              className="locked-notice-btn"
+              href="mailto:agrawal.vatsal@gmail.com?subject=Your%20portfolio%20—%20curious%20about%20a%20private%20project"
+            >✉ Email</a>
+          </div>
         </div>
       )}
     </div>

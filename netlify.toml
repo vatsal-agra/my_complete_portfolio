@@ -1,0 +1,35 @@
+# Netlify deploy config for Project World.
+#
+#   web  → static SPA built by Vite (published from web/dist)
+#   API  → the Hono backend, served by a single Netlify Function bound to
+#          /api/*, /ingest, /public/*, /healthz (see netlify/functions/api.mts)
+#   sync → a daily Scheduled Function that runs the GitHub sync in the cloud
+#          (see netlify/functions/sync.mts)
+#
+# The build compiles the server to plain JS first (server/dist) so the
+# functions bundle cleanly, then builds the web app.
+#
+# Required env vars (set in Netlify → Site settings → Environment):
+#   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+#   INGEST_TOKEN, GITHUB_TOKEN, GITHUB_USERNAME
+#   (optional) GITHUB_SYNC_MINUTES — ignored in the cloud; the schedule below
+#   drives the cadence, but env.ts still wants it parseable, so leave it unset
+#   to use the default.
+
+[build]
+  command = "pnpm install && pnpm --filter @project-world/server build && pnpm --filter @project-world/web build"
+  publish = "web/dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Anything not claimed by a function (those declare their own `config.path`)
+# falls through to the single-page app.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

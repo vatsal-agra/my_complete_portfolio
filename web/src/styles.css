@@ -1572,27 +1572,38 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
 .pcard-tl-summary { font-size: 12.5px; color: #d8d4c4; line-height: 1.35; }
 .pcard-tl-ts { font-size: 10.5px; color: #74716a; }
 
-/* "Can't view private repo" alert — small toast, centre-top of the world */
-.locked-toast {
+/* "This is private — get in touch" notice when a locked tower is clicked */
+.locked-notice {
   position: fixed;
-  top: 4.2rem;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   z-index: 30;
-  font-size: 13px;
-  letter-spacing: 0.01em;
+  width: min(320px, 88vw);
+  text-align: center;
+  padding: 1.4rem 1.3rem 1.3rem;
   color: #f2eede;
-  background: rgba(20, 22, 38, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  padding: 0.5rem 0.9rem;
-  border-radius: 999px;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-  animation: locked-toast-in 0.2s ease;
-  pointer-events: none;
+  background: rgba(16, 18, 32, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 16px 54px rgba(0, 0, 0, 0.55);
+  animation: locked-notice-in 0.22s ease;
 }
-.locked-toast strong { color: #ffd9a0; font-weight: 600; }
-@keyframes locked-toast-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes locked-notice-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); } to { opacity: 1; transform: translate(-50%, -50%); } }
+.locked-notice-close { position: absolute; top: 0.7rem; right: 0.85rem; background: transparent; border: 0; color: #8a8676; font-size: 11px; letter-spacing: 0.08em; cursor: pointer; }
+.locked-notice-close:hover { color: #fff; }
+.locked-notice-icon { font-size: 34px; margin-bottom: 0.3rem; }
+.locked-notice-title { font-family: var(--serif); font-size: 18px; color: #f7f3e6; margin-bottom: 0.4rem; }
+.locked-notice-body { font-size: 13px; line-height: 1.5; color: #c4c0b2; margin: 0 0 1rem; }
+.locked-notice-actions { display: flex; gap: 0.5rem; justify-content: center; }
+.locked-notice-btn {
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em;
+  color: #11131f; background: #ffd9a0; text-decoration: none;
+  padding: 0.5rem 0.9rem; border-radius: 8px; transition: transform 0.1s ease, filter 0.15s ease;
+}
+.locked-notice-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.locked-notice-li { background: #7db1ff; }
 
 /* ---- Refresh / sync feedback (owner HUD) ---- */
 .hud-tr button.syncing { opacity: 0.7; animation: hud-sync-pulse 1.1s ease-in-out infinite; cursor: default; }
