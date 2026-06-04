@@ -25,7 +25,9 @@
   functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "20"
+  # Must be >= 22.13: the repo's pinned pnpm (11.5.0) uses node:sqlite, which
+  # only exists in Node 22+. Matches the local dev Node version.
+  NODE_VERSION = "22"
 
 [functions]
   node_bundler = "esbuild"
