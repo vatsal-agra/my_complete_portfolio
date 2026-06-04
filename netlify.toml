@@ -20,17 +20,23 @@
 #   to use the default.
 
 [build]
-  command = "pnpm install && pnpm --filter @project-world/server build && pnpm --filter @project-world/web build"
+  command = "pnpm install && pnpm --filter @project-world/server build && pnpm --filter @project-world/web build && bash scripts/build-functions.sh"
   publish = "web/dist"
   functions = "netlify/functions"
 
 [build.environment]
-  # Must be >= 22.13: the repo's pinned pnpm (11.5.0) uses node:sqlite, which
-  # only exists in Node 22+. Matches the local dev Node version.
   NODE_VERSION = "22"
 
+# The functions are PRE-BUNDLED self-contained by scripts/build-functions.sh
+# (Netlify's own bundler can't resolve the pnpm-workspace deps), so deploy them
+# as-is without re-bundling (which would also double the __dirname banner).
 [functions]
-  node_bundler = "esbuild"
+  node_bundler = "none"
+
+# Daily GitHub sync — set here too (belt-and-suspenders alongside the function's
+# own config.schedule) so the cron is registered regardless.
+[functions."sync"]
+  schedule = "@daily"
 
 # Anything not claimed by a function (those declare their own `config.path`)
 # falls through to the single-page app.

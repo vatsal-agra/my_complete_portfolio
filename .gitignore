@@ -30,3 +30,6 @@ Thumbs.db
 
 # Netlify
 .netlify/
+
+# Built (bundled) Netlify functions — produced at build time
+netlify/functions/
