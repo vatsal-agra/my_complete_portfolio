@@ -85,8 +85,9 @@ app.route('/api', api)
 app.route('/public', publicRoutes)
 
 // --- /ingest-form (no auth on the page; the form POSTs to /ingest with token) ---
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const FORM_PATH = resolve(__dirname, '../public/ingest-form.html')
+// Computed inline (no `__dirname` variable) so esbuild's ESM bundling for the
+// Netlify Function doesn't collide with its injected __dirname shim.
+const FORM_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../public/ingest-form.html')
 
 app.get('/ingest-form', async (c) => {
   const html = await readFile(FORM_PATH, 'utf8')
