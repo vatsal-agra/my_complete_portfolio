@@ -118,11 +118,11 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
 .house3d-label {
   font-family: var(--serif);
   font-size: 13px;
-  font-weight: 600;
-  /* Warm amber, fairly bright so names pop against the moon — but alpha (not
-     `opacity`, which drei pins) keeps a crowded world from being harsh.
+  font-weight: 500;
+  /* Warm amber, bright enough to pop against the moon without shouting — alpha
+     (not `opacity`, which drei pins) keeps a crowded world from getting harsh.
      Hover/select restores full brightness. */
-  color: rgba(255, 226, 168, 0.86);
+  color: rgba(252, 228, 184, 0.72);
   letter-spacing: 0.02em;
   text-shadow:
     0 0 1px rgba(0,0,0,0.85),
