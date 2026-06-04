@@ -15,6 +15,12 @@ build/
 # Tests
 coverage/
 
+# Local Claude memory (notes for Claude + owner; keep private to this machine)
+claude-memory/
+
+# Personal scratch notes (owner-only, not part of the project)
+updates to be made.md
+
 # OS / editor
 .DS_Store
 Thumbs.db

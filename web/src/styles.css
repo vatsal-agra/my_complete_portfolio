@@ -388,6 +388,32 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
   color: #8a8676;
   margin-top: 0.25rem;
 }
+.eco-side-sub.dim { opacity: 0.6; }
+.eco-repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.3rem;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #d4b87a;
+  text-decoration: none;
+  border: 1px solid rgba(212, 184, 122, 0.4);
+  border-radius: 6px;
+  padding: 0.18rem 0.5rem;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  max-width: 100%;
+}
+.eco-repo-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eco-repo-link:hover {
+  background: rgba(212, 184, 122, 0.14);
+  border-color: rgba(212, 184, 122, 0.8);
+  color: #ffd9a0;
+}
 .eco-side-empty {
   color: #6a6657;
   font-style: italic;

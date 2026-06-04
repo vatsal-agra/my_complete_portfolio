@@ -39,12 +39,9 @@ import type { ProjectState, ProjectEvent } from '../lib/types'
 const START_CAM     = new THREE.Vector3(8, 55, 90)
 const DEFAULT_CAM   = new THREE.Vector3(0, 22, 28)
 const DEFAULT_TARGET = new THREE.Vector3(0, 1, 0)
-const FOCUS_DISTANCE = 9
+const FOCUS_DISTANCE = 12   // pulled back so the spire + panel sit in frame
+                            // without the user having to scroll out.
 const FOCUS_HEIGHT = 6.5
-const FOCUS_TARGET_Y = 3.2  // looking roughly at the spire's cap so the
-                             // ecosystem panel (rising above it) reads as
-                             // emerging from the obelisk in the lower half
-                             // of frame.
 
 interface CameraTarget {
   position: THREE.Vector3
@@ -248,9 +245,12 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
     [positioned],
   )
 
-  // Click → camera dolly to spire. Frame the spire in the lower half of the
-  // viewport so the ecosystem panel (which emerges from the cap and floats
-  // upward) has the upper half clear to be read.
+  // Click → camera dolly to spire. The ecosystem panel is a fixed-size,
+  // screen-space overlay anchored at the spire's *top* (height-dependent), so
+  // we aim the camera straight at that anchor — that projects the panel's
+  // centre to the viewport centre, keeping the whole panel in frame for tall
+  // and short spires alike (previously we aimed at the cap, so the taller the
+  // spire the further the panel rode above the top of the frame).
   const focusOn = useCallback((slug: string) => {
     const entry = positioned.find((e) => e.p.slug === slug)
     if (!entry) return
@@ -258,13 +258,18 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
     // Spires now sit on the curved globe surface — focus offsets are relative
     // to the local ground Y at the spire's (x, z), not world origin.
     const surfaceY = groundYAt(entry.x, entry.z)
-    const target = new THREE.Vector3(entry.x, surfaceY + FOCUS_TARGET_Y, entry.z)
+    // Same anchor the <Html> ecosystem panel uses below, minus a small bias so
+    // the panel sits a touch above centre with the spire reading underneath it.
+    const panelY = surfaceY + dimsTopFor(entry.p.status, entry.height) + 1.2
+    const target = new THREE.Vector3(entry.x, panelY - 1.2, entry.z)
     const len = Math.max(1, Math.hypot(entry.x, entry.z))
     const dx = entry.x / len
     const dz = entry.z / len
     const p = new THREE.Vector3(
       entry.x + dx * FOCUS_DISTANCE,
-      surfaceY + FOCUS_HEIGHT,
+      // Lift the camera toward the panel for tall spires so we frame it
+      // head-on rather than craning steeply upward.
+      surfaceY + FOCUS_HEIGHT + (panelY - surfaceY) * 0.45,
       entry.z + dz * FOCUS_DISTANCE,
     )
     setCamGoal({ position: p, target, ease: intro ? 1.2 : 2.2 })
