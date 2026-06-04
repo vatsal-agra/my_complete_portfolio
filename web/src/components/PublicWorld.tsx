@@ -120,10 +120,12 @@ export function PublicWorld() {
       const pos = position3DFor(ps, asOf ?? Date.now())
       const height = computeHeight({ commits: ps.commits_30d, totalEvents: ps.commits_30d, codeBytes: ps.code_bytes ?? undefined })
       const footprint = spireRadii(height).bottomRadius * 1.6
-      return { p: ps as ProjectState, x: pos.x, z: pos.z, height, footprint, fixed: false }
+      // Private towers look normal but their name carries a lock.
+      const p: ProjectState = privateSet.has(ps.slug) ? { ...ps, name: `🔒 ${ps.name}` } : ps
+      return { p, x: pos.x, z: pos.z, height, footprint, fixed: false }
     })
     return relaxPositions(raw, 0.7, 18).map(({ p, x, z, height }) => ({ p, x, z, height }))
-  }, [displayProjects, asOf])
+  }, [displayProjects, privateSet, asOf])
 
   const matchedSlugs = useMemo(() => {
     if (!query.trim()) return null
@@ -246,7 +248,9 @@ export function PublicWorld() {
       {selected && <PublicProjectCard slug={selected} onClose={recenter} />}
 
       {lockedToast && (
-        <div className="locked-toast">🔒 This project is private — you can’t open it.</div>
+        <div className="locked-toast">
+          🔒 This one’s private — want a closer look? <strong>Reach out and I’ll walk you through it.</strong>
+        </div>
       )}
     </div>
   )

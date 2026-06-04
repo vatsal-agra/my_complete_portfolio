@@ -118,15 +118,16 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
 .house3d-label {
   font-family: var(--serif);
   font-size: 13px;
-  font-weight: 500;
-  /* Faint by default (alpha in the colour, not `opacity`, which drei pins) so a
-     crowded world isn't a wall of text. Hover/select restores full brightness. */
-  color: rgba(244, 241, 230, 0.5);
+  font-weight: 600;
+  /* Warm amber, fairly bright so names pop against the moon — but alpha (not
+     `opacity`, which drei pins) keeps a crowded world from being harsh.
+     Hover/select restores full brightness. */
+  color: rgba(255, 226, 168, 0.86);
   letter-spacing: 0.02em;
   text-shadow:
-    0 0 1px rgba(0,0,0,0.65),
-    0 0 8px rgba(6,6,15,0.7),
-    0 0 18px rgba(6,6,15,0.5);
+    0 0 1px rgba(0,0,0,0.85),
+    0 0 6px rgba(6,6,15,0.85),
+    0 0 16px rgba(6,6,15,0.7);
   white-space: nowrap;
   user-select: none;
   transition: transform 180ms ease, color 180ms ease;
@@ -1590,6 +1591,7 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
   animation: locked-toast-in 0.2s ease;
   pointer-events: none;
 }
+.locked-toast strong { color: #ffd9a0; font-weight: 600; }
 @keyframes locked-toast-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* ---- Refresh / sync feedback (owner HUD) ---- */
