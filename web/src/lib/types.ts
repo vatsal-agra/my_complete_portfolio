@@ -24,6 +24,7 @@ export interface ProjectState {
   status: ProjectStatus
   next_step: string | null
   commits_30d: number
+  code_bytes?: number | null
 }
 
 export interface ProjectEvent {
@@ -90,6 +91,9 @@ export interface PublicProjectState {
   last_activity_ts: string | null
   created_at: string
   commits_30d: number
+  code_bytes?: number | null
+  /** True for anonymized "locked" private projects in the public world. */
+  private?: boolean
 }
 
 export interface PublicEvent {

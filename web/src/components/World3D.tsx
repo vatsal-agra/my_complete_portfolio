@@ -9,7 +9,7 @@
  * stay as 2D HTML overlays for clarity — they sit outside or beside the Canvas.
  */
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { api } from '../lib/api'
@@ -29,6 +29,7 @@ import { Legend } from './Legend'
 import { SearchBar } from './SearchBar'
 import { Radar } from './Radar'
 import { Meteors, type MeteorSpec } from './Meteors'
+import { CameraRig, type CameraTarget } from './CameraRig'
 import { matchesQuery } from '../lib/search'
 import type { ProjectState, ProjectEvent } from '../lib/types'
 
@@ -42,45 +43,6 @@ const DEFAULT_TARGET = new THREE.Vector3(0, 1, 0)
 const FOCUS_DISTANCE = 12   // pulled back so the spire + panel sit in frame
                             // without the user having to scroll out.
 const FOCUS_HEIGHT = 6.5
-
-interface CameraTarget {
-  position: THREE.Vector3
-  target: THREE.Vector3
-  /** Higher = snappier lerp. ~2.2 for normal clicks, ~0.7 for the cinematic intro. */
-  ease?: number
-}
-
-/**
- * CameraRig — lerps the camera + target to a goal each frame, then BAILS
- * when the goal is essentially reached so the user's pan/rotate/zoom isn't
- * fought every frame. Goal is also cleared externally on OrbitControls'
- * 'start' event (see World3D below) so any user input takes immediate priority.
- */
-function CameraRig({
-  goal,
-  onReached,
-  controlsRef,
-}: {
-  goal: CameraTarget | null
-  onReached: () => void
-  controlsRef: React.MutableRefObject<any>
-}) {
-  const { camera } = useThree()
-  useFrame((_state, delta) => {
-    if (!goal || !controlsRef.current) return
-    const controls = controlsRef.current
-    const ease = goal.ease ?? 2.2
-    const alpha = 1 - Math.pow(0.001, delta)
-    camera.position.lerp(goal.position, Math.min(1, alpha * ease))
-    controls.target.lerp(goal.target, Math.min(1, alpha * ease))
-    controls.update()
-    // Within ~0.05u of the goal? Hand control back to the user.
-    if (camera.position.distanceToSquared(goal.position) < 0.0025) {
-      onReached()
-    }
-  })
-  return null
-}
 
 export function World3D({ onLogout }: { onLogout: () => void }) {
   const [projects, setProjects] = useState<ProjectState[] | null>(null)

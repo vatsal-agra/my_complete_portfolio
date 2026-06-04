@@ -1,34 +1,42 @@
 /**
- * Public, read-only view of the world (PROJECT_SPEC §11).
+ * PublicWorld — the read-only, sanitized 3D world that visitors (recruiters)
+ * see. Same globe + spires as the owner world, fed entirely by the `/public/*`
+ * endpoints (anon-key, sanitized views): no spend, no metrics, no private
+ * repos, no editing, no time-travel, no owner controls.
  *
- * Uses the unauthenticated /public/* endpoints which are backed by anon-key
- * Supabase reads against the sanitized views. No login, no add-project, no
- * portfolio-spend HUD, no interior money section, no time-travel.
+ * The security boundary is the API/DB, not this component — `/public/*` only
+ * ever returns safe data. This view just renders it nicely.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useGesture } from '@use-gesture/react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas } from '@react-three/fiber'
+import { OrbitControls } from '@react-three/drei'
+import * as THREE from 'three'
 import { publicApi } from '../lib/api'
-import { computePosition } from '../lib/position'
-import { relativeTime, formatTimestamp } from '../lib/time'
-import type { ProjectState, ProjectEvent, PublicProjectState, PublicProjectDetail } from '../lib/types'
+import { position3DFor, relaxPositions } from '../lib/position3d'
+import { computeHeight, spireRadii } from '../lib/dimensions'
+import { groundYAt } from '../lib/globe'
+import { matchesQuery } from '../lib/search'
+import { deriveProjectsAt } from '../lib/derive'
+import { Scene3D } from './Scene3D'
+import { House3D } from './House3D'
+import { Legend } from './Legend'
+import { SearchBar } from './SearchBar'
+import { Radar } from './Radar'
+import { Scrubber } from './Scrubber'
+import { CameraRig, type CameraTarget } from './CameraRig'
+import { PublicProjectCard } from './PublicProjectCard'
+import type { ProjectState, ProjectEvent, PublicProjectState, PublicEvent } from '../lib/types'
 
-interface Camera { x: number; y: number; scale: number }
-const MIN_ZOOM = 0.2
-const MAX_ZOOM = 4
+const LOCKED_HEIGHT = 3.0  // fixed tower height for redacted private projects
 
-function clamp(n: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, n)) }
-function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3) }
-function lerp(a: number, b: number, t: number): number { return a + (b - a) * t }
+const START_CAM      = new THREE.Vector3(8, 55, 90)
+const DEFAULT_CAM    = new THREE.Vector3(0, 22, 28)
+const DEFAULT_TARGET = new THREE.Vector3(0, 1, 0)
+const FOCUS_DISTANCE = 12
+const FOCUS_HEIGHT   = 6.5
 
-const STATUS_COLOR = { thriving: '#2d6a4f', active: '#7fa68e', seedling: '#c97b5b', dormant: '#a89b88' }
-const STATUS_SIZE  = { thriving: 32,        active: 24,        seedling: 18,        dormant: 16 }
-
-const EVENT_GLYPH: Record<string, string> = {
-  progress: '·', milestone: '★', status_change: '⇌',
-  github_commit: '⌘', github_deploy: '↑',
-}
-
-// Adapt the public shape to ProjectState (so computePosition just works).
+// Adapt the sanitized public shape to a ProjectState so the shared 3D pieces
+// (House3D, positioning, search) just work. Owner-only fields are nulled out.
 function asProjectState(p: PublicProjectState): ProjectState {
   return {
     id: p.slug,
@@ -46,199 +54,197 @@ function asProjectState(p: PublicProjectState): ProjectState {
     status: p.status,
     next_step: null,
     commits_30d: p.commits_30d,
+    code_bytes: p.code_bytes,
   }
 }
 
 export function PublicWorld() {
   const [projects, setProjects] = useState<PublicProjectState[] | null>(null)
+  const [events, setEvents] = useState<PublicEvent[]>([])
   const [err, setErr] = useState<string | null>(null)
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, scale: 1 })
   const [selected, setSelected] = useState<string | null>(null)
-  const [detail, setDetail] = useState<PublicProjectDetail | null>(null)
-  const viewportRef = useRef<HTMLDivElement>(null)
-  const animRef = useRef<number | null>(null)
+  const [query, setQuery] = useState('')
+  const [asOf, setAsOf] = useState<number | null>(null)
+  const [camGoal, setCamGoal] = useState<CameraTarget | null>(null)
+  const [intro, setIntro] = useState(true)
+  const controlsRef = useRef<any>(null)
 
   useEffect(() => {
-    publicApi.world().then(setProjects).catch((e) => setErr(e?.message ?? 'load failed'))
-  }, [])
-
-  useEffect(() => {
-    if (projects && projects.length > 0 && viewportRef.current) {
-      const w = viewportRef.current.clientWidth
-      const h = viewportRef.current.clientHeight
-      setCamera({ x: w / 2, y: h / 2, scale: 1 })
-    }
-  }, [projects?.length])
-
-  useEffect(() => {
-    if (!selected) { setDetail(null); return }
     let cancelled = false
-    publicApi.project(selected).then((d) => { if (!cancelled) setDetail(d) }).catch(() => {})
+    Promise.all([publicApi.world(), publicApi.recentEvents(5000)])
+      .then(([w, e]) => {
+        if (cancelled) return
+        setProjects(w)
+        setEvents(e)
+        setCamGoal({ position: DEFAULT_CAM.clone(), target: DEFAULT_TARGET.clone(), ease: 0.65 })
+        const t = setTimeout(() => setIntro(false), 4200)
+        return () => clearTimeout(t)
+      })
+      .catch((e) => { if (!cancelled) setErr(e?.message ?? 'load failed') })
     return () => { cancelled = true }
-  }, [selected])
-
-  const positioned = useMemo(() => {
-    if (!projects) return []
-    return projects.map((p) => ({ p, pos: computePosition(asProjectState(p)) }))
-  }, [projects])
-
-  const stopAnim = useCallback(() => {
-    if (animRef.current !== null) { cancelAnimationFrame(animRef.current); animRef.current = null }
   }, [])
 
-  const animateCamera = useCallback((target: Camera) => {
-    stopAnim()
-    const start = { ...camera }
-    const startTime = performance.now()
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - startTime) / 360)
-      const e = easeOutCubic(t)
-      setCamera({
-        x: lerp(start.x, target.x, e),
-        y: lerp(start.y, target.y, e),
-        scale: lerp(start.scale, target.scale, e),
-      })
-      if (t < 1) animRef.current = requestAnimationFrame(tick)
-      else animRef.current = null
-    }
-    animRef.current = requestAnimationFrame(tick)
-  }, [camera, stopAnim])
+  // Which (anonymized) slugs are locked private towers.
+  const privateSet = useMemo(
+    () => new Set((projects ?? []).filter((p) => p.private).map((p) => p.slug)),
+    [projects],
+  )
 
-  const bind = useGesture({
-    onDrag: ({ delta: [dx, dy], event }) => {
-      if ((event.target as HTMLElement | null)?.closest('.house')) return
-      stopAnim()
-      setCamera((c) => ({ ...c, x: c.x + dx, y: c.y + dy }))
-    },
-    onWheel: ({ delta: [, dy], event }) => {
-      event.preventDefault()
-      stopAnim()
-      const factor = Math.exp(-dy * 0.0015)
-      setCamera((c) => {
-        const newScale = clamp(c.scale * factor, MIN_ZOOM, MAX_ZOOM)
-        const rect = viewportRef.current?.getBoundingClientRect()
-        if (!rect) return { ...c, scale: newScale }
-        const mx = (event as WheelEvent).clientX - rect.left
-        const my = (event as WheelEvent).clientY - rect.top
-        const ratio = newScale / c.scale
-        return { scale: newScale, x: mx - (mx - c.x) * ratio, y: my - (my - c.y) * ratio }
-      })
-    },
-  }, { wheel: { eventOptions: { passive: false } } })
+  // Public events mapped to the ProjectEvent shape the time-travel derivation
+  // expects (public projects use slug as id; private events aren't exposed).
+  const mappedEvents = useMemo<ProjectEvent[]>(
+    () => events.map((e) => ({
+      id: e.id,
+      project_id: e.project_slug ?? '',
+      ts: e.ts,
+      type: e.type,
+      summary: e.summary,
+      payload: {},
+      source: 'github',
+    })),
+    [events],
+  )
+
+  const adapted = useMemo(() => (projects ?? []).map(asProjectState), [projects])
+
+  // Live, or re-derived at the scrubbed `asOf`.
+  const displayProjects = useMemo(
+    () => (asOf === null ? adapted : deriveProjectsAt(adapted, mappedEvents, asOf)),
+    [adapted, mappedEvents, asOf],
+  )
+
+  // Position by recency, size by code bytes (private towers get a fixed height
+  // and a locked appearance), then relax so the world keeps a little gap.
+  const positioned = useMemo(() => {
+    const raw = displayProjects.map((ps) => {
+      const locked = privateSet.has(ps.slug)
+      const pos = position3DFor(ps, asOf ?? Date.now())
+      const height = locked
+        ? LOCKED_HEIGHT
+        : computeHeight({ commits: ps.commits_30d, totalEvents: ps.commits_30d, codeBytes: ps.code_bytes ?? undefined })
+      const footprint = spireRadii(height).bottomRadius * 1.6
+      // Locked towers render grey (archived hue) with a lock label.
+      const p: ProjectState = locked ? { ...ps, name: '🔒 Private', stage: 'archived' } : ps
+      return { p, x: pos.x, z: pos.z, height, footprint, fixed: false }
+    })
+    return relaxPositions(raw, 0.7, 18).map(({ p, x, z, height }) => ({ p, x, z, height }))
+  }, [displayProjects, privateSet, asOf])
+
+  const matchedSlugs = useMemo(() => {
+    if (!query.trim()) return null
+    return new Set(positioned.filter((e) => matchesQuery(e.p, query)).map((e) => e.p.slug))
+  }, [positioned, query])
+
+  const radarItems = useMemo(
+    () => positioned.map(({ p, x, z }) => ({ slug: p.slug, name: p.name, x, z, stage: p.stage })),
+    [positioned],
+  )
 
   const focusOn = useCallback((slug: string) => {
-    if (!viewportRef.current || !projects) return
-    const p = projects.find((q) => q.slug === slug)
-    if (!p) return
-    const pos = computePosition(asProjectState(p))
-    const w = viewportRef.current.clientWidth
-    const h = viewportRef.current.clientHeight
-    const targetScale = 2.2
+    const entry = positioned.find((e) => e.p.slug === slug)
+    if (!entry) return
     setSelected(slug)
-    animateCamera({ scale: targetScale, x: w / 2 - pos.x * targetScale, y: h / 2 - pos.y * targetScale })
-  }, [projects, animateCamera])
+    const surfaceY = groundYAt(entry.x, entry.z)
+    const target = new THREE.Vector3(entry.x, surfaceY + entry.height * 0.5 + 1.2, entry.z)
+    const len = Math.max(1, Math.hypot(entry.x, entry.z))
+    const dx = entry.x / len, dz = entry.z / len
+    const pos = new THREE.Vector3(
+      entry.x + dx * FOCUS_DISTANCE,
+      surfaceY + FOCUS_HEIGHT + entry.height * 0.4,
+      entry.z + dz * FOCUS_DISTANCE,
+    )
+    setCamGoal({ position: pos, target, ease: intro ? 1.2 : 2.2 })
+  }, [positioned, intro])
 
   const recenter = useCallback(() => {
-    if (!viewportRef.current) return
-    const w = viewportRef.current.clientWidth
-    const h = viewportRef.current.clientHeight
     setSelected(null)
-    animateCamera({ x: w / 2, y: h / 2, scale: 1 })
-  }, [animateCamera])
+    setCamGoal({ position: DEFAULT_CAM.clone(), target: DEFAULT_TARGET.clone(), ease: 2.2 })
+  }, [])
 
-  if (err)        return <div className="full-error">could not load: {err}</div>
-  if (!projects)  return <div className="loading">loading…</div>
+  // Drop the camera goal the moment the user grabs the controls.
+  useEffect(() => {
+    if (!projects) return
+    const c = controlsRef.current
+    if (!c) return
+    const onStart = () => setCamGoal(null)
+    c.addEventListener('start', onStart)
+    return () => c.removeEventListener('start', onStart)
+  }, [projects])
+
+  const anyInterior = selected !== null
+
+  if (err) return <div className="full-error">could not load world: {err}</div>
+  if (!projects) return <div className="loading">loading the world…</div>
 
   return (
-    <div className="world-shell public">
-      <div ref={viewportRef} className="viewport" {...bind()} onClick={() => setSelected(null)}>
-        <div
-          className="stage"
-          style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})` }}
-        >
-          {positioned.map(({ p, pos }) => (
-            <div
-              key={p.slug}
-              className={`house tier-${p.status}${selected === p.slug ? ' selected' : ''}`}
-              style={{ transform: `translate(${pos.x}px, ${pos.y}px) scale(${1 / Math.max(0.4, camera.scale)})` }}
-              onClick={(e) => { e.stopPropagation(); focusOn(p.slug) }}
-              role="button"
-              aria-label={`${p.name} — ${p.status}`}
-            >
-              <div
-                className="house-marker"
-                style={{
-                  width: STATUS_SIZE[p.status], height: STATUS_SIZE[p.status],
-                  background: STATUS_COLOR[p.status],
-                  opacity: p.status === 'dormant' ? 0.6 : 1,
-                  left: -STATUS_SIZE[p.status] / 2, top: -STATUS_SIZE[p.status] / 2,
-                }}
-              />
-              <div className="house-label" style={{ top: STATUS_SIZE[p.status] / 2 + 6 }}>{p.name}</div>
-            </div>
+    <div className="world-shell world-3d">
+      <Canvas
+        camera={{ position: START_CAM.toArray() as [number, number, number], fov: 50, near: 0.1, far: 600 }}
+        shadows
+        gl={{ antialias: true, powerPreference: 'high-performance' }}
+        onPointerMissed={() => { if (selected) recenter() }}
+      >
+        <Suspense fallback={null}>
+          <Scene3D />
+        </Suspense>
+
+        <OrbitControls
+          ref={controlsRef}
+          target={DEFAULT_TARGET.toArray() as [number, number, number]}
+          enableDamping enablePan enableRotate enableZoom
+          minDistance={3} maxDistance={90}
+          minPolarAngle={0.15} maxPolarAngle={Math.PI / 2 - 0.04}
+          dampingFactor={0.09} panSpeed={1.2} rotateSpeed={0.55} zoomSpeed={0.9}
+          keyPanSpeed={28}
+          screenSpacePanning={false}
+          mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }}
+          touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE }}
+          keys={{ LEFT: 'KeyA', UP: 'KeyW', RIGHT: 'KeyD', BOTTOM: 'KeyS' }}
+          listenToKeyEvents={typeof window !== 'undefined' ? window : undefined}
+          makeDefault
+        />
+        <CameraRig goal={camGoal} onReached={() => setCamGoal(null)} controlsRef={controlsRef} />
+
+        <Suspense fallback={null}>
+          {positioned.map(({ p, x, z, height }) => (
+            <House3D
+              key={p.id}
+              project={p}
+              x={x}
+              z={z}
+              height={height}
+              selected={selected === p.slug}
+              anyInterior={anyInterior}
+              fresh={false}
+              searchMiss={matchedSlugs ? !matchedSlugs.has(p.slug) : false}
+              searchHit={matchedSlugs ? matchedSlugs.has(p.slug) : false}
+              onClick={focusOn}
+            />
           ))}
-        </div>
-      </div>
+        </Suspense>
+      </Canvas>
 
       <div className="hud hud-tl">
         <span className="hud-label">project world</span>
-        <span className="hud-meta">{projects.length} projects · public view</span>
+        <span className="hud-meta">{positioned.length} projects · public view</span>
       </div>
-
       <div className="hud hud-tr">
-        <button onClick={recenter} title="recenter (r)">recenter</button>
+        <a className="public-owner-link" href="/login" title="Owner sign-in">owner →</a>
       </div>
 
-      {selected && detail && (
-        <aside className="public-panel" onClick={(e) => e.stopPropagation()}>
-          <button className="interior-close" onClick={() => setSelected(null)}>esc</button>
-          <h2 className="interior-name">{detail.project.name}</h2>
-          <div className="interior-meta">
-            <span className="category">{detail.project.category}</span>
-            <span className={`status-badge status-${detail.project.status}`}>{detail.project.status}</span>
-            {detail.project.repo && (
-              <a className="link" href={`https://github.com/${detail.project.repo}`} target="_blank" rel="noreferrer">github</a>
-            )}
-            {detail.project.live_url && (
-              <a className="link" href={detail.project.live_url} target="_blank" rel="noreferrer">live</a>
-            )}
-            <span className="dim">{relativeTime(detail.project.last_activity_ts)}</span>
-          </div>
-          {detail.project.goal && (
-            <section className="interior-section interior-goal">
-              <div className="section-label">north star</div>
-              <p>{detail.project.goal}</p>
-            </section>
-          )}
-          {detail.project.tech_stack.length > 0 && (
-            <section className="interior-section">
-              <div className="section-label">stack</div>
-              <div className="chip-row">
-                {detail.project.tech_stack.map((t) => <span key={t} className="chip">{t}</span>)}
-              </div>
-            </section>
-          )}
-          <section className="interior-section">
-            <div className="section-label">activity</div>
-            {detail.events.length === 0 ? (
-              <p className="dim">no public activity yet.</p>
-            ) : (
-              <ul className="timeline">
-                {detail.events.map((e) => (
-                  <li key={e.id} className={`tl-row tl-${e.type}`}>
-                    <span className="tl-glyph">{EVENT_GLYPH[e.type] ?? '·'}</span>
-                    <span className="tl-summary">{e.summary}</span>
-                    <span className="tl-ts">{formatTimestamp(e.ts)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </aside>
+      <Legend />
+      <SearchBar
+        query={query}
+        onChange={setQuery}
+        matchCount={matchedSlugs ? matchedSlugs.size : positioned.length}
+        total={positioned.length}
+      />
+      <Radar items={radarItems} controlsRef={controlsRef} onFocus={focusOn} matchSlugs={matchedSlugs} />
+      <Scrubber projects={adapted} events={mappedEvents} asOf={asOf} setAsOf={setAsOf} />
+
+      {selected && (
+        <PublicProjectCard slug={selected} locked={privateSet.has(selected)} onClose={recenter} />
       )}
     </div>
   )
 }
-
-// Keep this import to satisfy bundler tree-shaking if needed; the type is used internally.
-type _ProjectEvent = ProjectEvent
