@@ -14,30 +14,18 @@ const EVENT_GLYPH: Record<string, string> = {
   github_commit: '⌘', github_deploy: '↑', note: '✎',
 }
 
-export function PublicProjectCard({ slug, locked = false, onClose }: { slug: string; locked?: boolean; onClose: () => void }) {
+export function PublicProjectCard({ slug, onClose }: { slug: string; onClose: () => void }) {
   const [detail, setDetail] = useState<PublicProjectDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
-    if (locked) return  // locked towers expose nothing — never fetch.
     let cancelled = false
     setDetail(null); setErr(null)
     publicApi.project(slug)
       .then((d) => { if (!cancelled) setDetail(d) })
       .catch((e) => { if (!cancelled) setErr(e?.message ?? 'load failed') })
     return () => { cancelled = true }
-  }, [slug, locked])
-
-  if (locked) {
-    return (
-      <div className="pcard pcard-locked" onClick={(e) => e.stopPropagation()}>
-        <button className="pcard-close" onClick={onClose} aria-label="close">esc</button>
-        <div className="pcard-lock-icon">🔒</div>
-        <h2 className="pcard-name">Private project</h2>
-        <p className="pcard-goal">This one's a private repository — it's on the map, but its details are kept private.</p>
-      </div>
-    )
-  }
+  }, [slug])
 
   const p = detail?.project
 

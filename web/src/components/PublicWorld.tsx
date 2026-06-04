@@ -27,8 +27,6 @@ import { CameraRig, type CameraTarget } from './CameraRig'
 import { PublicProjectCard } from './PublicProjectCard'
 import type { ProjectState, ProjectEvent, PublicProjectState, PublicEvent } from '../lib/types'
 
-const LOCKED_HEIGHT = 3.0  // fixed tower height for redacted private projects
-
 const START_CAM      = new THREE.Vector3(8, 55, 90)
 const DEFAULT_CAM    = new THREE.Vector3(0, 22, 28)
 const DEFAULT_TARGET = new THREE.Vector3(0, 1, 0)
@@ -67,6 +65,7 @@ export function PublicWorld() {
   const [asOf, setAsOf] = useState<number | null>(null)
   const [camGoal, setCamGoal] = useState<CameraTarget | null>(null)
   const [intro, setIntro] = useState(true)
+  const [lockedToast, setLockedToast] = useState(false)
   const controlsRef = useRef<any>(null)
 
   useEffect(() => {
@@ -113,22 +112,18 @@ export function PublicWorld() {
     [adapted, mappedEvents, asOf],
   )
 
-  // Position by recency, size by code bytes (private towers get a fixed height
-  // and a locked appearance), then relax so the world keeps a little gap.
+  // Position by recency, size by code bytes, then relax so the world keeps a
+  // little gap. Private towers look exactly like public ones here — they're
+  // only different on click (blocked, see focusOn).
   const positioned = useMemo(() => {
     const raw = displayProjects.map((ps) => {
-      const locked = privateSet.has(ps.slug)
       const pos = position3DFor(ps, asOf ?? Date.now())
-      const height = locked
-        ? LOCKED_HEIGHT
-        : computeHeight({ commits: ps.commits_30d, totalEvents: ps.commits_30d, codeBytes: ps.code_bytes ?? undefined })
+      const height = computeHeight({ commits: ps.commits_30d, totalEvents: ps.commits_30d, codeBytes: ps.code_bytes ?? undefined })
       const footprint = spireRadii(height).bottomRadius * 1.6
-      // Locked towers render grey (archived hue) with a lock label.
-      const p: ProjectState = locked ? { ...ps, name: '🔒 Private', stage: 'archived' } : ps
-      return { p, x: pos.x, z: pos.z, height, footprint, fixed: false }
+      return { p: ps as ProjectState, x: pos.x, z: pos.z, height, footprint, fixed: false }
     })
     return relaxPositions(raw, 0.7, 18).map(({ p, x, z, height }) => ({ p, x, z, height }))
-  }, [displayProjects, privateSet, asOf])
+  }, [displayProjects, asOf])
 
   const matchedSlugs = useMemo(() => {
     if (!query.trim()) return null
@@ -143,6 +138,12 @@ export function PublicWorld() {
   const focusOn = useCallback((slug: string) => {
     const entry = positioned.find((e) => e.p.slug === slug)
     if (!entry) return
+    // Private tower: don't open it — just flash a small "can't view" alert.
+    if (privateSet.has(slug)) {
+      setLockedToast(true)
+      window.setTimeout(() => setLockedToast(false), 2600)
+      return
+    }
     setSelected(slug)
     const surfaceY = groundYAt(entry.x, entry.z)
     const target = new THREE.Vector3(entry.x, surfaceY + entry.height * 0.5 + 1.2, entry.z)
@@ -154,7 +155,7 @@ export function PublicWorld() {
       entry.z + dz * FOCUS_DISTANCE,
     )
     setCamGoal({ position: pos, target, ease: intro ? 1.2 : 2.2 })
-  }, [positioned, intro])
+  }, [positioned, intro, privateSet])
 
   const recenter = useCallback(() => {
     setSelected(null)
@@ -242,8 +243,10 @@ export function PublicWorld() {
       <Radar items={radarItems} controlsRef={controlsRef} onFocus={focusOn} matchSlugs={matchedSlugs} />
       <Scrubber projects={adapted} events={mappedEvents} asOf={asOf} setAsOf={setAsOf} />
 
-      {selected && (
-        <PublicProjectCard slug={selected} locked={privateSet.has(selected)} onClose={recenter} />
+      {selected && <PublicProjectCard slug={selected} onClose={recenter} />}
+
+      {lockedToast && (
+        <div className="locked-toast">🔒 This project is private — you can’t open it.</div>
       )}
     </div>
   )
