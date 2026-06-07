@@ -538,6 +538,7 @@ export async function runGithubPull(): Promise<PullSummary> {
     .from('projects')
     .select('id, slug, name, repo, live_url, archived, goal, tech_stack')
     .eq('archived', false)
+    .eq('hidden', false)
     .not('repo', 'is', null)
   if (error) throw new Error(`load projects: ${error.message}`)
 

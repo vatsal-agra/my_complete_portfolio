@@ -33,6 +33,9 @@ interface Props {
   /** Called after an owner edit (e.g. stage change) so World3D can update the
    *  spire colour live without waiting for the next poll. */
   onUpdated?: (p: ProjectState) => void
+  /** Called after the owner removes the project from the world (soft-hide).
+   *  World3D drops the spire immediately instead of waiting for a poll. */
+  onRemoved?: (slug: string) => void
 }
 
 const STAGES: { key: ProjectStage; label: string }[] = [
@@ -99,7 +102,7 @@ function polar(angle: number, r: number): { x: number; y: number } {
   return { x: Math.cos(angle) * r, y: -Math.sin(angle) * r }
 }
 
-export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Props) {
+export function Ecosystem({ project, onClose, isPublic = false, onUpdated, onRemoved }: Props) {
   const [detail, setDetail] = useState<ProjectDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -305,7 +308,7 @@ export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Pro
 
       {/* RIGHT — vitals / stats */}
       <aside className="eco-side eco-right">
-        <StatsDashboard detail={detail} project={project} isPublic={isPublic} onUpdated={onUpdated} onGoalSaved={patchDetail} />
+        <StatsDashboard detail={detail} project={project} isPublic={isPublic} onUpdated={onUpdated} onRemoved={onRemoved} onGoalSaved={patchDetail} />
       </aside>
     </div>
   )
@@ -452,7 +455,7 @@ function GoalEditor({
   )
 }
 
-function StatsDashboard({ detail, project, isPublic = false, onUpdated, onGoalSaved }: { detail: ProjectDetail | null; project: ProjectState; isPublic?: boolean; onUpdated?: (p: ProjectState) => void; onGoalSaved: (p: Partial<ProjectState>) => void }) {
+function StatsDashboard({ detail, project, isPublic = false, onUpdated, onRemoved, onGoalSaved }: { detail: ProjectDetail | null; project: ProjectState; isPublic?: boolean; onUpdated?: (p: ProjectState) => void; onRemoved?: (slug: string) => void; onGoalSaved: (p: Partial<ProjectState>) => void }) {
   if (!detail) {
     return (
       <>
@@ -560,7 +563,54 @@ function StatsDashboard({ detail, project, isPublic = false, onUpdated, onGoalSa
           </div>
         </div>
       )}
+
+      {!isPublic && <RemoveProjectButton project={project} onRemoved={onRemoved} />}
     </>
+  )
+}
+
+/** Two-click soft-remove: drops the tower from the world (server flips
+ *  `projects.hidden = true`). Events are preserved — the action is reversible
+ *  by editing the row in Supabase. Owner-only; never rendered in public mode. */
+function RemoveProjectButton({ project, onRemoved }: { project: ProjectState; onRemoved?: (slug: string) => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(false)
+
+  const remove = async () => {
+    setBusy(true); setErr(false)
+    try {
+      await api.patchProject(project.slug, { hidden: true })
+      onRemoved?.(project.slug)
+    } catch {
+      setErr(true); setBusy(false); setConfirming(false)
+    }
+  }
+
+  if (!confirming) {
+    return (
+      <div className="eco-stat-block eco-remove-block">
+        <button className="eco-remove-btn" onClick={() => setConfirming(true)}>
+          remove from world
+        </button>
+        {err && <div className="eco-remove-err">remove failed — try again</div>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="eco-stat-block eco-remove-block">
+      <div className="eco-remove-confirm">
+        Remove <strong>{project.name}</strong> from the world?
+        <div className="eco-remove-sub">The tower disappears from the world. Events are kept (reversible in the DB).</div>
+        <div className="eco-remove-actions">
+          <button className="eco-goal-btn" disabled={busy} onClick={() => setConfirming(false)}>cancel</button>
+          <button className="eco-goal-btn eco-remove-confirm-btn" disabled={busy} onClick={() => void remove()}>
+            {busy ? 'removing…' : 'yes, remove'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

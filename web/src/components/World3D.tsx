@@ -368,6 +368,10 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
               project={selectedEntry.p}
               onClose={recenter}
               onUpdated={(p) => setProjects((curr) => curr?.map((x) => (x.id === p.id ? { ...x, ...p } : x)) ?? curr)}
+              onRemoved={(slug) => {
+                setProjects((curr) => curr?.filter((x) => x.slug !== slug) ?? null)
+                recenter()
+              }}
             />
           </Html>
         )}

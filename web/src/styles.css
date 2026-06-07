@@ -1501,6 +1501,39 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
 /* Read-only goal shown in the public Ecosystem stats panel */
 .eco-goal-readonly { margin: 0.3rem 0 0; font-size: 13px; line-height: 1.5; color: #d8d4c4; }
 
+/* Owner-only "remove from world" control. Lives at the bottom of the vitals
+   panel, muted red so it reads as destructive without yelling. */
+.eco-remove-block {
+  margin-top: 0.6rem;
+  border-top: 1px solid rgba(180, 90, 90, 0.18);
+  padding-top: 0.7rem;
+}
+.eco-remove-btn {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #e89b8b;
+  background: transparent;
+  border: 1.5px solid rgba(232, 155, 139, 0.45);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.eco-remove-btn:hover { background: rgba(232, 155, 139, 0.12); border-color: #e89b8b; }
+.eco-remove-err { margin-top: 0.4rem; font-size: 11px; color: #e89b8b; }
+.eco-remove-confirm { font-size: 13px; color: #f4f0e3; line-height: 1.45; }
+.eco-remove-sub { margin-top: 0.35rem; font-size: 11px; color: #aaa495; line-height: 1.4; }
+.eco-remove-actions { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
+.eco-remove-confirm-btn {
+  color: #11131f !important;
+  background: #e89b8b !important;
+  border-color: #e89b8b !important;
+}
+
 /* ---- Public view: owner link + project card ---- */
 .public-owner-link {
   font-size: 12px;

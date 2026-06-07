@@ -133,7 +133,12 @@ export const ProjectCreate = z.object({
 export const ProjectPatch = ProjectCreate
   .partial()
   .omit({ slug: true })
-  .extend({ archived: z.boolean().optional() })
+  .extend({
+    archived: z.boolean().optional(),
+    // Owner-only soft-remove: drops the tower from the world without touching
+    // its events. See migration 20260607.
+    hidden: z.boolean().optional(),
+  })
 
 export type ProjectCreateInput = z.infer<typeof ProjectCreate>
 export type ProjectPatchInput = z.infer<typeof ProjectPatch>
