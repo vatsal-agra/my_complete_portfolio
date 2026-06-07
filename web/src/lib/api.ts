@@ -64,6 +64,28 @@ export const api = {
       }>
     }
   }>('/api/pull/github/sync', { method: 'POST' }),
+  // Incremental variant — does discover on the first call (offset 0) then
+  // pulls `batch` repos per request. The HUD loops this until `done: true`,
+  // which keeps every single request well under Netlify's 26 s timeout.
+  triggerGithubSyncBatch: (offset: number, batch: number) => call<{
+    ok: true
+    discover: { created: unknown[]; updated: unknown[] } | null
+    pull: {
+      scanned: number
+      offset: number
+      total: number
+      next_offset: number
+      done: boolean
+      results: Array<{
+        slug: string
+        repo: string | null
+        commits_added: number
+        releases_added: number
+        code_bytes?: number
+        error?: string
+      }>
+    }
+  }>(`/api/pull/github/sync-batch?offset=${offset}&batch=${batch}`, { method: 'POST' }),
   ingest: (body: { project: string; type: string; summary: string; payload?: Record<string, unknown>; source?: string }) =>
     call<{ event: unknown; project_state: ProjectState | null }>('/ingest', { method: 'POST', body: JSON.stringify({ source: 'manual', ...body }) }),
 }

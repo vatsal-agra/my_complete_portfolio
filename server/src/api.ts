@@ -167,6 +167,26 @@ api.post('/pull/github/sync', async (c) => {
   }
 })
 
+// Incremental sync: one batch of N projects per call so we never trip the
+// Netlify function timeout, no matter how many repos need backfilling. The
+// frontend loops until `done: true`. On the first call (offset === 0) we
+// also run discover so new repos appear before the batches start pulling
+// their commits.
+api.post('/pull/github/sync-batch', async (c) => {
+  const offset = Math.max(0, Number(c.req.query('offset') ?? 0))
+  const batch  = Math.max(1, Math.min(10, Number(c.req.query('batch') ?? 5)))
+  const { runGithubPullBatch, discoverRepos } = await import('./github.js')
+  try {
+    let discover = null
+    if (offset === 0) discover = await discoverRepos()
+    const pull = await runGithubPullBatch(offset, batch)
+    return c.json({ ok: true, discover, pull })
+  } catch (err) {
+    console.error('github sync-batch failed', err)
+    return c.json({ error: 'sync_batch_failed', detail: err instanceof Error ? err.message : String(err) }, 500)
+  }
+})
+
 // Diagnostic: what does GitHub *currently* report for one repo, and what
 // would we compute as code_bytes? Read-only — never writes events. Useful
 // when a project's tower height doesn't look right ("why is this huge repo

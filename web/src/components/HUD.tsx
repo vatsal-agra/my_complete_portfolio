@@ -19,21 +19,37 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
   // all — within a few seconds.
   const refresh = async () => {
     if (syncing) return
-    setSyncing(true); setResult(null)
+    setSyncing(true); setResult('syncing…')
+    const BATCH = 5
+    type PullResult = {
+      slug: string; repo: string | null
+      commits_added: number; releases_added: number
+      code_bytes?: number; error?: string
+    }
+    const all: PullResult[] = []
+    let discover: { created: unknown[]; updated: unknown[] } | null = null
+    let offset = 0
     try {
-      const s = await api.triggerGithubSync()
-      // Full per-repo breakdown to the console so we can actually see what
-      // changed (code_bytes deltas, per-repo errors, etc.) when something
-      // doesn't update as expected.
-      console.log('[sync] discover:', s.discover)
-      console.table(s.pull.results)
+      // Loop: each call processes BATCH repos and stays well under the 26 s
+      // Netlify timeout. discover runs on the first call (offset === 0).
+      while (true) {
+        const r = await api.triggerGithubSyncBatch(offset, BATCH)
+        if (r.discover) discover = r.discover
+        all.push(...r.pull.results)
+        if (r.pull.done) break
+        setResult(`syncing ${r.pull.next_offset}/${r.pull.total}…`)
+        offset = r.pull.next_offset
+      }
 
-      const commits = s.pull.results.reduce((n, r) => n + r.commits_added, 0)
-      const releases = s.pull.results.reduce((n, r) => n + r.releases_added, 0)
-      const repos = s.discover.created.length
-      const reconciled = s.discover.updated.length
-      const errored = s.pull.results.filter((r) => (r as { error?: string }).error).length
-      const sizeUpdates = s.pull.results.filter((r) => typeof (r as { code_bytes?: number }).code_bytes === 'number').length
+      console.log('[sync] discover:', discover)
+      console.table(all)
+
+      const commits = all.reduce((n, r) => n + r.commits_added, 0)
+      const releases = all.reduce((n, r) => n + r.releases_added, 0)
+      const repos = discover?.created.length ?? 0
+      const reconciled = discover?.updated.length ?? 0
+      const errored = all.filter((r) => r.error).length
+      const sizeUpdates = all.filter((r) => typeof r.code_bytes === 'number').length
       const parts: string[] = []
       if (repos) parts.push(`+${repos} new`)
       if (reconciled) parts.push(`${reconciled} updated`)
@@ -43,9 +59,8 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
       if (errored) parts.push(`⚠ ${errored} errored`)
       setResult(parts.length ? parts.join(' · ') : 'already up to date')
     } catch (err) {
-      // Surface the real reason instead of a generic "sync failed". Most
-      // likely culprits: 502/504 (function timeout), 5xx (server crash),
-      // network (offline). The DevTools Network tab has the full payload.
+      // Surface the real reason. The batch loop means individual timeouts
+      // shouldn't happen, but other 5xx / network errors still can.
       let msg = 'sync failed'
       if (err instanceof ApiError) {
         const detail = (err.body as { error?: string; detail?: string } | null)
@@ -53,8 +68,8 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
       } else if (err instanceof Error) {
         msg = `sync failed: ${err.message}`
       }
-      setResult(msg)
-      console.error('[sync] failed', err)
+      setResult(msg + (all.length ? ` (partial: ${all.length} done)` : ''))
+      console.error('[sync] failed at offset', offset, err)
     } finally {
       setSyncing(false)
       setTimeout(() => setResult(null), 10000)

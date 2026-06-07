@@ -723,22 +723,55 @@ async function mapWithConcurrency<T, R>(
   return out
 }
 
-export async function runGithubPull(): Promise<PullSummary> {
-  const { data: projects, error } = await supabase
+async function loadActiveProjects(): Promise<ProjectRow[]> {
+  const { data, error } = await supabase
     .from('projects')
     .select('id, slug, name, repo, live_url, archived, goal, tech_stack')
     .eq('archived', false)
     .eq('hidden', false)
     .not('repo', 'is', null)
+    .order('slug', { ascending: true })  // stable ordering for batched paging
   if (error) throw new Error(`load projects: ${error.message}`)
+  return (data ?? []) as ProjectRow[]
+}
 
-  const results = await mapWithConcurrency(
-    (projects ?? []) as ProjectRow[],
-    PULL_CONCURRENCY,
-    pullOneProject,
-  )
+export async function runGithubPull(): Promise<PullSummary> {
+  const projects = await loadActiveProjects()
+  const results = await mapWithConcurrency(projects, PULL_CONCURRENCY, pullOneProject)
+  return { ok: true, scanned: projects.length, results }
+}
 
-  return { ok: true, scanned: projects?.length ?? 0, results }
+export interface BatchPullSummary extends PullSummary {
+  /** 0-based index of the first project this batch processed. */
+  offset: number
+  /** Total number of projects (across all batches). */
+  total: number
+  /** Where the next batch should start. Equal to `total` when done. */
+  next_offset: number
+  /** True when this batch finished the list — caller can stop looping. */
+  done: boolean
+}
+
+/** Process one slice of the active project list. The frontend calls this in a
+ *  loop until `done: true`, which keeps each individual HTTP request well
+ *  under the Netlify 26 s function timeout — even a one-time backfill of 30+
+ *  fresh repos can't blow it up. */
+export async function runGithubPullBatch(offset: number, batch: number): Promise<BatchPullSummary> {
+  const all = await loadActiveProjects()
+  const total = all.length
+  const start = Math.max(0, Math.min(offset, total))
+  const end = Math.min(total, start + Math.max(1, batch))
+  const slice = all.slice(start, end)
+  const results = await mapWithConcurrency(slice, PULL_CONCURRENCY, pullOneProject)
+  return {
+    ok: true,
+    scanned: results.length,
+    results,
+    offset: start,
+    total,
+    next_offset: end,
+    done: end >= total,
+  }
 }
 
 async function fetchCommits(repo: string): Promise<GitHubCommit[]> {
