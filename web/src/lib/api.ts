@@ -52,7 +52,17 @@ export const api = {
   triggerGithubSync: () => call<{
     ok: true
     discover: { created: unknown[]; updated: unknown[] }
-    pull: { scanned: number; results: Array<{ commits_added: number; releases_added: number; code_bytes?: number }> }
+    pull: {
+      scanned: number
+      results: Array<{
+        slug: string
+        repo: string | null
+        commits_added: number
+        releases_added: number
+        code_bytes?: number
+        error?: string
+      }>
+    }
   }>('/api/pull/github/sync', { method: 'POST' }),
   ingest: (body: { project: string; type: string; summary: string; payload?: Record<string, unknown>; source?: string }) =>
     call<{ event: unknown; project_state: ProjectState | null }>('/ingest', { method: 'POST', body: JSON.stringify({ source: 'manual', ...body }) }),

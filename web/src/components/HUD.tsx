@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
 import { clearToken } from '../lib/auth'
 
 interface Props {
@@ -22,21 +22,42 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
     setSyncing(true); setResult(null)
     try {
       const s = await api.triggerGithubSync()
+      // Full per-repo breakdown to the console so we can actually see what
+      // changed (code_bytes deltas, per-repo errors, etc.) when something
+      // doesn't update as expected.
+      console.log('[sync] discover:', s.discover)
+      console.table(s.pull.results)
+
       const commits = s.pull.results.reduce((n, r) => n + r.commits_added, 0)
       const releases = s.pull.results.reduce((n, r) => n + r.releases_added, 0)
       const repos = s.discover.created.length
       const reconciled = s.discover.updated.length
+      const errored = s.pull.results.filter((r) => (r as { error?: string }).error).length
+      const sizeUpdates = s.pull.results.filter((r) => typeof (r as { code_bytes?: number }).code_bytes === 'number').length
       const parts: string[] = []
       if (repos) parts.push(`+${repos} new`)
       if (reconciled) parts.push(`${reconciled} updated`)
       if (commits) parts.push(`+${commits} commits`)
       if (releases) parts.push(`+${releases} releases`)
+      if (sizeUpdates) parts.push(`${sizeUpdates} resized`)
+      if (errored) parts.push(`⚠ ${errored} errored`)
       setResult(parts.length ? parts.join(' · ') : 'already up to date')
-    } catch {
-      setResult('sync failed')
+    } catch (err) {
+      // Surface the real reason instead of a generic "sync failed". Most
+      // likely culprits: 502/504 (function timeout), 5xx (server crash),
+      // network (offline). The DevTools Network tab has the full payload.
+      let msg = 'sync failed'
+      if (err instanceof ApiError) {
+        const detail = (err.body as { error?: string; detail?: string } | null)
+        msg = `sync failed: ${err.status}${detail?.error ? ` (${detail.error})` : ''}${detail?.detail ? ` — ${detail.detail.slice(0, 80)}` : ''}`
+      } else if (err instanceof Error) {
+        msg = `sync failed: ${err.message}`
+      }
+      setResult(msg)
+      console.error('[sync] failed', err)
     } finally {
       setSyncing(false)
-      setTimeout(() => setResult(null), 5000)
+      setTimeout(() => setResult(null), 10000)
     }
   }
 

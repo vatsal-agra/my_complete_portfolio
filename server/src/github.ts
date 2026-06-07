@@ -547,6 +547,40 @@ async function enrichEmptyFields(
 }
 
 const PER_REPO_COMMIT_LIMIT = 30
+
+/** Read-only diagnostic. Returns exactly what GitHub reports for `repo` right
+ *  now, plus the code_bytes value the next sync would record (max of langSum
+ *  and size_kb*1024) and what's currently stored. Lets us see at a glance why
+ *  a tower's height doesn't match expectations — usually a freshly pushed repo
+ *  whose Linguist scan hasn't finished, or a vendored codebase that Linguist
+ *  systematically undercounts. */
+export async function probeRepoSize(repo: string, projectId: string): Promise<{
+  langMap: Record<string, number> | null
+  langBytes: number
+  size_kb: number | null
+  size_bytes: number
+  computed_code_bytes: number | null
+  stored_code_bytes: number | null
+  will_re_record: boolean
+}> {
+  const [langMap, meta, stored] = await Promise.all([
+    fetchLanguagesMap(repo),
+    fetchRepoMeta(repo),
+    lastCodeBytes(projectId),
+  ])
+  const langBytes = langMap ? Object.values(langMap).reduce((a, b) => a + b, 0) : 0
+  const sizeBytes = meta?.size_kb ? meta.size_kb * 1024 : 0
+  const computed = Math.max(langBytes, sizeBytes) || null
+  return {
+    langMap,
+    langBytes,
+    size_kb: meta?.size_kb ?? null,
+    size_bytes: sizeBytes,
+    computed_code_bytes: computed,
+    stored_code_bytes: stored,
+    will_re_record: computed !== null && computed > 0 && computed !== stored,
+  }
+}
 /** Max concurrent per-repo pulls. The owner refresh is sequential before this
  *  finished; with 20 repos that took ~20× one repo's time and tripped the
  *  Netlify 10s function timeout. 5 parallel keeps GitHub happy (well under the

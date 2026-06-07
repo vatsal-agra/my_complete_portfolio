@@ -166,3 +166,25 @@ api.post('/pull/github/sync', async (c) => {
     return c.json({ error: 'sync_failed', detail: err instanceof Error ? err.message : String(err) }, 500)
   }
 })
+
+// Diagnostic: what does GitHub *currently* report for one repo, and what
+// would we compute as code_bytes? Read-only — never writes events. Useful
+// when a project's tower height doesn't look right ("why is this huge repo
+// rendering tiny?"). Returns the raw langMap, repo.size_kb, and the
+// max-based code_bytes the next sync would record.
+api.get('/pull/github/probe/:slug', async (c) => {
+  const slug = c.req.param('slug')
+  const { data: project, error: pErr } = await supabase
+    .from('projects').select('id, slug, repo').eq('slug', slug).maybeSingle()
+  if (pErr) return c.json({ error: pErr.message }, 500)
+  if (!project) return c.json({ error: 'not_found' }, 404)
+  if (!project.repo) return c.json({ error: 'no_repo' }, 400)
+
+  const { probeRepoSize } = await import('./github.js')
+  try {
+    const probe = await probeRepoSize(project.repo, project.id)
+    return c.json({ slug, repo: project.repo, ...probe })
+  } catch (err) {
+    return c.json({ error: 'probe_failed', detail: err instanceof Error ? err.message : String(err) }, 500)
+  }
+})
