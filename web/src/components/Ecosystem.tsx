@@ -52,14 +52,23 @@ const R_HEADER = 205
 const R_LEAF_RADII = [330, 450, 570]  // leaf 0, 1, 2 — increasing distance, 120 apart
 const VB = 600  // viewBox half-extent
 
-// Six fixed angles (radians, 0 = +x, counter-clockwise) at 60° intervals.
-const BRANCH_ANGLES: Record<string, number> = {
-  goal:    Math.PI / 2,
-  latest:  Math.PI / 6,
-  stack:  -Math.PI / 6,
-  langs:  -Math.PI / 2,
-  metrics:-5 * Math.PI / 6,
-  spend:   5 * Math.PI / 6,
+// Branches are placed evenly around the circle at render time based on how
+// many are visible (public mode hides spend + metrics, so 4 instead of 6).
+// `goal` always sits at the top (π/2) and the rest fan out clockwise from it
+// so the layout stays symmetric whatever the count.
+const BRANCH_ORDER = ['goal', 'latest', 'stack', 'langs', 'metrics', 'spend'] as const
+function computeBranchAngles(keys: string[]): Record<string, number> {
+  const n = Math.max(1, keys.length)
+  const step = (2 * Math.PI) / n
+  // Start at the top (π/2). But if n is a multiple of 4, a top-aligned wheel
+  // also puts a spoke on the horizontal axis — and on a horizontal spoke a
+  // 210-wide leaf bubble collides with the 136-wide header sitting just inside
+  // it. Rotate the whole wheel by half a step in that case so spokes go
+  // diagonal instead. (n=6 is unaffected; this matters most for n=4 in public.)
+  const start = n % 4 === 0 ? Math.PI / 2 + step / 2 : Math.PI / 2
+  const out: Record<string, number> = {}
+  keys.forEach((k, i) => { out[k] = start - i * step })
+  return out
 }
 
 // Refined palette: all warm, all in the same value range, no candy pastels.
@@ -112,8 +121,18 @@ export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Pro
     let bs = buildBranches(detail).map((b) => ({ ...b, color: BRANCH_COLOR[b.key] ?? b.color }))
     // Public view never shows money/metrics.
     if (isPublic) bs = bs.filter((b) => b.key !== 'spend' && b.key !== 'metrics')
+    // Keep a stable, symmetric clockwise order regardless of which branches survived.
+    const rank = (k: string) => BRANCH_ORDER.indexOf(k as (typeof BRANCH_ORDER)[number])
+    bs.sort((a, b) => rank(a.key) - rank(b.key))
     return bs
   }, [detail, isPublic])
+
+  // Recomputed every time the set of visible branches changes, so the wheel
+  // stays evenly distributed (4 branches => 90° apart, 6 => 60° apart, etc.).
+  const branchAngles = useMemo(
+    () => computeBranchAngles(branches.map((b) => b.key)),
+    [branches],
+  )
 
   // Patch the loaded detail in place after an owner edit (e.g. goal) so the
   // mind-map re-renders without a refetch.
@@ -159,7 +178,7 @@ export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Pro
 
             {/* Lines: core → branch headers */}
             {branches.map((b) => {
-              const angle = BRANCH_ANGLES[b.key]!
+              const angle = branchAngles[b.key]!
               const head = polar(angle, R_HEADER)
               return (
                 <line
@@ -177,7 +196,7 @@ export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Pro
 
             {/* Lines: header → leaves */}
             {branches.map((b) => {
-              const angle = BRANCH_ANGLES[b.key]!
+              const angle = branchAngles[b.key]!
               const head = polar(angle, R_HEADER)
               return b.items.map((_, i) => {
                 const pos = leafPos(angle, i, b.items.length)
@@ -196,7 +215,7 @@ export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Pro
 
             {/* Leaves */}
             {branches.map((b) => {
-              const angle = BRANCH_ANGLES[b.key]!
+              const angle = branchAngles[b.key]!
               return b.items.map((item, i) => {
                 const pos = leafPos(angle, i, b.items.length)
                 const w = leafWidth(item)
@@ -222,7 +241,7 @@ export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Pro
 
             {/* Branch headers */}
             {branches.map((b) => {
-              const angle = BRANCH_ANGLES[b.key]!
+              const angle = branchAngles[b.key]!
               const pos = polar(angle, R_HEADER)
               return (
                 <g key={`hdr-${b.key}`} transform={`translate(${pos.x} ${pos.y})`}>
