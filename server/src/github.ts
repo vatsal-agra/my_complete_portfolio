@@ -547,6 +547,147 @@ async function enrichEmptyFields(
 }
 
 const PER_REPO_COMMIT_LIMIT = 30
+/** Max concurrent per-repo pulls. The owner refresh is sequential before this
+ *  finished; with 20 repos that took ~20× one repo's time and tripped the
+ *  Netlify 10s function timeout. 5 parallel keeps GitHub happy (well under the
+ *  authenticated 5000/hr ceiling even if every refresh runs them in a burst)
+ *  while shrinking total wall-time ~5×. */
+const PULL_CONCURRENCY = 5
+
+interface ProjectRow {
+  id: string
+  slug: string
+  name: string
+  repo: string | null
+  live_url: string | null
+  archived: boolean
+  goal: string | null
+  tech_stack: string[] | null
+}
+
+/** Process the per-repo work for a single project. Returns its pull result.
+ *  All the independent GitHub reads (languages, commits, releases, repo meta)
+ *  fire in parallel — they were sequential before, which added several seconds
+ *  per repo on the owner refresh. Errors are caught and reported on the result
+ *  so one bad repo doesn't poison the whole batch. */
+async function pullOneProject(p: ProjectRow): Promise<ProjectPullResult> {
+  const result: ProjectPullResult = { slug: p.slug, repo: p.repo, commits_added: 0, releases_added: 0 }
+  try {
+    if (p.repo) {
+      // Four independent GitHub reads — fire in parallel.
+      const [langMap, commits, releases, repoMeta] = await Promise.all([
+        fetchLanguagesMap(p.repo),
+        fetchCommits(p.repo),
+        fetchReleases(p.repo),
+        fetchRepoMeta(p.repo),
+      ])
+
+      // Commits
+      const existingShas = await fetchExistingShas(p.id)
+      for (const commit of commits) {
+        if (existingShas.has(commit.sha)) continue
+        const committedAt = commit.commit.author?.date
+        await ingest({
+          project: p.slug,
+          type: 'github_commit',
+          summary: shortMessage(commit.commit.message),
+          payload: { sha: commit.sha, url: commit.html_url, committed_at: committedAt },
+          source: 'github',
+          ...(committedAt ? { ts: committedAt } : {}),
+        })
+        result.commits_added++
+      }
+
+      // Releases
+      const existingReleaseIds = await fetchExistingReleaseIds(p.id)
+      for (const r of releases) {
+        if (r.draft) continue
+        if (existingReleaseIds.has(r.id)) continue
+        await ingest({
+          project: p.slug,
+          type: 'github_deploy',
+          summary: `release ${r.tag_name}${r.prerelease ? ' (pre)' : ''}${r.name ? ' — ' + r.name : ''}`,
+          payload: { release_id: r.id, tag: r.tag_name, url: r.html_url, published_at: r.published_at },
+          source: 'github',
+          ...(r.published_at ? { ts: r.published_at } : {}),
+        })
+        result.releases_added++
+      }
+
+      // Code size — sum of language bytes ≈ how much code lives in the repo.
+      // `/languages` alone undersells two cases:
+      //   1. Repos with vendored / generated / data files — Linguist filters
+      //      those out, so a huge cloned-in codebase can report ~50 KB.
+      //   2. Freshly pushed repos — Linguist runs async; `/languages` is
+      //      empty for several minutes after the first push.
+      // Repo metadata's `size` (KB, whole working tree, unfiltered, instant)
+      // is the floor — we take the max of the two so neither case shrinks
+      // the tower. Recorded as a metric, timestamped at the last commit so
+      // it doesn't distort recency. Only re-recorded when the size changes.
+      const langBytes = langMap ? Object.values(langMap).reduce((a, b) => a + b, 0) : 0
+      const sizeBytes = repoMeta?.size_kb ? repoMeta.size_kb * 1024 : 0
+      const codeBytes = Math.max(langBytes, sizeBytes) || null
+      if (codeBytes !== null && codeBytes > 0) {
+        const prev = await lastCodeBytes(p.id)
+        if (prev !== codeBytes) {
+          const ts = commits[0]?.commit?.author?.date
+          await ingest({
+            project: p.slug,
+            type: 'metric',
+            summary: `code size ${Math.round(codeBytes / 1024)} KB`,
+            payload: { name: 'code_bytes', value: codeBytes, unit: 'bytes' },
+            source: 'github',
+            ...(ts ? { ts } : {}),
+          })
+          result.code_bytes = codeBytes
+        }
+      }
+
+      // Backfill empty goal / stack from GitHub (best-effort). Pass the
+      // description we already have so enrichment doesn't re-call /repos.
+      await enrichEmptyFields(p, result, langMap, repoMeta?.description)
+    }
+
+    // Live URL ping
+    if (p.live_url) {
+      const up = await pingLive(p.live_url)
+      const prev = await lastLiveState(p.id)
+      const changed = prev === null || prev !== up
+      if (changed) {
+        await ingest({
+          project: p.slug,
+          type: 'status_change',
+          summary: up ? 'live site responding' : 'live site appears down',
+          payload: { live: up, url: p.live_url, checked_at: new Date().toISOString() },
+          source: 'github',
+        })
+      }
+      result.live_check = { up, changed }
+    }
+  } catch (err) {
+    result.error = err instanceof Error ? err.message : String(err)
+  }
+  return result
+}
+
+/** Run async `worker` over `items` with at most `concurrency` in flight at
+ *  once. Preserves input order in the output, and never rejects (worker errors
+ *  must be returned inside the result type). */
+async function mapWithConcurrency<T, R>(
+  items: T[], concurrency: number, worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      out[i] = await worker(items[i]!)
+    }
+  })
+  await Promise.all(runners)
+  return out
+}
 
 export async function runGithubPull(): Promise<PullSummary> {
   const { data: projects, error } = await supabase
@@ -557,118 +698,11 @@ export async function runGithubPull(): Promise<PullSummary> {
     .not('repo', 'is', null)
   if (error) throw new Error(`load projects: ${error.message}`)
 
-  const results: ProjectPullResult[] = []
-  for (const p of projects ?? []) {
-    const result: ProjectPullResult = { slug: p.slug, repo: p.repo, commits_added: 0, releases_added: 0 }
-    try {
-      // Commits
-      if (p.repo) {
-        // Languages once per repo — drives both the code-size metric (sum of
-        // bytes) and the languages part of stack enrichment below.
-        const langMap = await fetchLanguagesMap(p.repo)
-
-        const commits = await fetchCommits(p.repo)
-        const existingShas = await fetchExistingShas(p.id)
-        for (const commit of commits) {
-          if (existingShas.has(commit.sha)) continue
-          const committedAt = commit.commit.author?.date
-          await ingest({
-            project: p.slug,
-            type: 'github_commit',
-            summary: shortMessage(commit.commit.message),
-            payload: {
-              sha: commit.sha,
-              url: commit.html_url,
-              committed_at: committedAt,
-            },
-            source: 'github',
-            ...(committedAt ? { ts: committedAt } : {}),
-          })
-          result.commits_added++
-        }
-
-        // Releases
-        const releases = await fetchReleases(p.repo)
-        const existingReleaseIds = await fetchExistingReleaseIds(p.id)
-        for (const r of releases) {
-          if (r.draft) continue
-          if (existingReleaseIds.has(r.id)) continue
-          await ingest({
-            project: p.slug,
-            type: 'github_deploy',
-            summary: `release ${r.tag_name}${r.prerelease ? ' (pre)' : ''}${r.name ? ' — ' + r.name : ''}`,
-            payload: {
-              release_id: r.id,
-              tag: r.tag_name,
-              url: r.html_url,
-              published_at: r.published_at,
-            },
-            source: 'github',
-            ...(r.published_at ? { ts: r.published_at } : {}),
-          })
-          result.releases_added++
-        }
-
-        // Code size — sum of language bytes ≈ how much code lives in the repo.
-        // A far better "how big is this project" signal than commit count
-        // (a huge codebase committed twice should still be tall).
-        //
-        // `/languages` alone undersells two cases:
-        //   1. Repos with vendored / generated / data files — Linguist filters
-        //      those out, so a huge cloned-in codebase can report ~50 KB.
-        //   2. Freshly pushed repos — Linguist runs async; `/languages` is
-        //      empty for several minutes after the first push.
-        // Repo metadata's `size` (KB, whole working tree, unfiltered, instant)
-        // is the floor — we take the max of the two so neither case shrinks
-        // the tower. Recorded as a metric, timestamped at the last commit so
-        // it doesn't distort recency. Only re-recorded when the size changes.
-        const repoMeta = await fetchRepoMeta(p.repo)
-        const langBytes = langMap ? Object.values(langMap).reduce((a, b) => a + b, 0) : 0
-        const sizeBytes = repoMeta?.size_kb ? repoMeta.size_kb * 1024 : 0
-        const codeBytes = Math.max(langBytes, sizeBytes) || null
-        if (codeBytes !== null && codeBytes > 0) {
-          const prev = await lastCodeBytes(p.id)
-          if (prev !== codeBytes) {
-            const ts = commits[0]?.commit?.author?.date
-            await ingest({
-              project: p.slug,
-              type: 'metric',
-              summary: `code size ${Math.round(codeBytes / 1024)} KB`,
-              payload: { name: 'code_bytes', value: codeBytes, unit: 'bytes' },
-              source: 'github',
-              ...(ts ? { ts } : {}),
-            })
-            result.code_bytes = codeBytes
-          }
-        }
-
-        // Backfill empty goal / stack / languages from GitHub (best-effort).
-        // Pass the description we already fetched above so enrichment doesn't
-        // re-call /repos/{repo}.
-        await enrichEmptyFields(p, result, langMap, repoMeta?.description)
-      }
-
-      // Live URL ping
-      if (p.live_url) {
-        const up = await pingLive(p.live_url)
-        const prev = await lastLiveState(p.id)
-        const changed = prev === null || prev !== up
-        if (changed) {
-          await ingest({
-            project: p.slug,
-            type: 'status_change',
-            summary: up ? 'live site responding' : 'live site appears down',
-            payload: { live: up, url: p.live_url, checked_at: new Date().toISOString() },
-            source: 'github',
-          })
-        }
-        result.live_check = { up, changed }
-      }
-    } catch (err) {
-      result.error = err instanceof Error ? err.message : String(err)
-    }
-    results.push(result)
-  }
+  const results = await mapWithConcurrency(
+    (projects ?? []) as ProjectRow[],
+    PULL_CONCURRENCY,
+    pullOneProject,
+  )
 
   return { ok: true, scanned: projects?.length ?? 0, results }
 }

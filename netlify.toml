@@ -33,8 +33,18 @@
 [functions]
   node_bundler = "none"
 
+# Owner refresh button (POST /api/pull/github/sync) does ~5 GitHub calls + DB
+# writes per repo. The default 10s function timeout was tripping when there
+# were several new repos to backfill — bump to Netlify's 26s synchronous max
+# so a refresh with up to ~20 repos comfortably fits (paired with parallelized
+# per-repo pulls in server/src/github.ts).
+[functions."api"]
+  timeout = 26
+
 # Daily GitHub sync — set here too (belt-and-suspenders alongside the function's
-# own config.schedule) so the cron is registered regardless.
+# own config.schedule) so the cron is registered regardless. The scheduled
+# function gets the long background-style timeout automatically; this is just
+# the schedule.
 [functions."sync"]
   schedule = "@daily"
 
