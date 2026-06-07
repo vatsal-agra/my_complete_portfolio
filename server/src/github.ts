@@ -367,13 +367,27 @@ async function fetchLanguagesMap(repo: string): Promise<Record<string, number> |
   return (await res.json()) as Record<string, number>
 }
 
-interface GitHubRepoMeta { description: string | null; homepage: string | null }
+interface GitHubRepoMeta {
+  description: string | null
+  homepage: string | null
+  /** Working-tree size in KB (GitHub returns it on the repo metadata). Useful
+   *  as a floor for code_bytes — `/languages` undercounts when a repo includes
+   *  vendored libs / generated files / data (Linguist filters those out), and
+   *  it can also return `{}` for several minutes after a freshly pushed repo
+   *  while Linguist computes asynchronously. `size_kb` is unfiltered and
+   *  available immediately. */
+  size_kb: number | null
+}
 
 async function fetchRepoMeta(repo: string): Promise<GitHubRepoMeta | null> {
   const res = await fetch(`https://api.github.com/repos/${repo}`, { headers: GITHUB_HEADERS })
   if (!res.ok) return null
-  const j = (await res.json()) as GitHubRepoMeta
-  return { description: j.description ?? null, homepage: j.homepage ?? null }
+  const j = (await res.json()) as { description?: string | null; homepage?: string | null; size?: number }
+  return {
+    description: j.description ?? null,
+    homepage: j.homepage ?? null,
+    size_kb: typeof j.size === 'number' ? j.size : null,
+  }
 }
 
 const RAW_ACCEPT = 'application/vnd.github.raw'
@@ -507,6 +521,7 @@ async function enrichEmptyFields(
   p: EnrichableProject,
   result: ProjectPullResult,
   langMap: Record<string, number> | null,
+  description?: string | null,
 ): Promise<void> {
   if (!p.repo) return
   const needGoal = !p.goal || !p.goal.trim()
@@ -515,7 +530,7 @@ async function enrichEmptyFields(
   if (!needGoal && !needStack) return
 
   try {
-    const enr = await computeEnrichment(p.repo, { needGoal, needStack, langMap })
+    const enr = await computeEnrichment(p.repo, { needGoal, needStack, langMap, description })
     const patch: { goal?: string; tech_stack?: string[] } = {}
     if (needGoal && enr.goal) patch.goal = enr.goal
     if (needStack && enr.tech_stack?.length) {
@@ -594,12 +609,23 @@ export async function runGithubPull(): Promise<PullSummary> {
           result.releases_added++
         }
 
-        // Code size — sum of language bytes ≈ how much code actually lives in
-        // the repo's files. A far better "how big is this project" signal than
-        // commit count (a huge codebase committed twice should still be tall).
-        // Recorded as a metric event, timestamped at the last commit so it
-        // doesn't distort recency. Only re-recorded when the size changes.
-        const codeBytes = langMap ? Object.values(langMap).reduce((a, b) => a + b, 0) : null
+        // Code size — sum of language bytes ≈ how much code lives in the repo.
+        // A far better "how big is this project" signal than commit count
+        // (a huge codebase committed twice should still be tall).
+        //
+        // `/languages` alone undersells two cases:
+        //   1. Repos with vendored / generated / data files — Linguist filters
+        //      those out, so a huge cloned-in codebase can report ~50 KB.
+        //   2. Freshly pushed repos — Linguist runs async; `/languages` is
+        //      empty for several minutes after the first push.
+        // Repo metadata's `size` (KB, whole working tree, unfiltered, instant)
+        // is the floor — we take the max of the two so neither case shrinks
+        // the tower. Recorded as a metric, timestamped at the last commit so
+        // it doesn't distort recency. Only re-recorded when the size changes.
+        const repoMeta = await fetchRepoMeta(p.repo)
+        const langBytes = langMap ? Object.values(langMap).reduce((a, b) => a + b, 0) : 0
+        const sizeBytes = repoMeta?.size_kb ? repoMeta.size_kb * 1024 : 0
+        const codeBytes = Math.max(langBytes, sizeBytes) || null
         if (codeBytes !== null && codeBytes > 0) {
           const prev = await lastCodeBytes(p.id)
           if (prev !== codeBytes) {
@@ -617,7 +643,9 @@ export async function runGithubPull(): Promise<PullSummary> {
         }
 
         // Backfill empty goal / stack / languages from GitHub (best-effort).
-        await enrichEmptyFields(p, result, langMap)
+        // Pass the description we already fetched above so enrichment doesn't
+        // re-call /repos/{repo}.
+        await enrichEmptyFields(p, result, langMap, repoMeta?.description)
       }
 
       // Live URL ping
