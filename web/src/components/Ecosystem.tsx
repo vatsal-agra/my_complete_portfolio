@@ -17,8 +17,9 @@
  * rather than a Trapper Keeper.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { api } from '../lib/api'
+import { api, publicApi } from '../lib/api'
 import { buildBranches, type Branch } from '../lib/ecosystem-data'
+import { publicDetailToProjectDetail } from '../lib/public-adapt'
 import { relativeTime, formatTimestamp } from '../lib/time'
 import { STAGE_COLOR } from './House3D'
 import type { ProjectDetail, ProjectState, ProjectEvent, ProjectStage } from '../lib/types'
@@ -26,6 +27,9 @@ import type { ProjectDetail, ProjectState, ProjectEvent, ProjectStage } from '..
 interface Props {
   project: ProjectState
   onClose: () => void
+  /** Public (read-only, sanitized) mode — used by the public world. Hides the
+   *  stage editor and the spend/metrics branches, and loads via /public/*. */
+  isPublic?: boolean
   /** Called after an owner edit (e.g. stage change) so World3D can update the
    *  spire colour live without waiting for the next poll. */
   onUpdated?: (p: ProjectState) => void
@@ -38,11 +42,15 @@ const STAGES: { key: ProjectStage; label: string }[] = [
   { key: 'archived', label: 'Archived' },
 ]
 
-// SVG geometry. Bumped up so headers, leaves, and the core all render large.
+// SVG geometry. Each branch shows up to 3 leaves stacked straight OUTWARD along
+// its spoke (no sideways fan) at these radii. The 120px gap between radii is
+// what keeps stacked bubbles from overlapping even on the near-horizontal
+// spokes — a smaller gap lets a 210px-wide bubble collide with the next one
+// out. Verified collision-free (incl. header↔leaf and core↔leaf) at worst-case
+// full width; ext ≈ 599 just inside VB = 600.
 const R_HEADER = 205
-const R_LEAF_NEAR = 305
-const R_LEAF_FAR = 380
-const VB = 510  // viewBox half-extent
+const R_LEAF_RADII = [330, 450, 570]  // leaf 0, 1, 2 — increasing distance, 120 apart
+const VB = 600  // viewBox half-extent
 
 // Six fixed angles (radians, 0 = +x, counter-clockwise) at 60° intervals.
 const BRANCH_ANGLES: Record<string, number> = {
@@ -82,24 +90,30 @@ function polar(angle: number, r: number): { x: number; y: number } {
   return { x: Math.cos(angle) * r, y: -Math.sin(angle) * r }
 }
 
-export function Ecosystem({ project, onClose, onUpdated }: Props) {
+export function Ecosystem({ project, onClose, isPublic = false, onUpdated }: Props) {
   const [detail, setDetail] = useState<ProjectDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setDetail(null); setErr(null)
-    api.project(project.slug)
+    const load = isPublic
+      ? publicApi.project(project.slug).then(publicDetailToProjectDetail)
+      : api.project(project.slug)
+    load
       .then((d) => { if (!cancelled) setDetail(d) })
       .catch((e) => { if (!cancelled) setErr(e?.message ?? 'load failed') })
     return () => { cancelled = true }
-  }, [project.slug])
+  }, [project.slug, isPublic])
 
   const branches = useMemo<Branch[]>(() => {
     if (!detail) return []
     // Override the dynamic colors with our cohesive palette.
-    return buildBranches(detail).map((b) => ({ ...b, color: BRANCH_COLOR[b.key] ?? b.color }))
-  }, [detail])
+    let bs = buildBranches(detail).map((b) => ({ ...b, color: BRANCH_COLOR[b.key] ?? b.color }))
+    // Public view never shows money/metrics.
+    if (isPublic) bs = bs.filter((b) => b.key !== 'spend' && b.key !== 'metrics')
+    return bs
+  }, [detail, isPublic])
 
   // Patch the loaded detail in place after an owner edit (e.g. goal) so the
   // mind-map re-renders without a refetch.
@@ -272,7 +286,7 @@ export function Ecosystem({ project, onClose, onUpdated }: Props) {
 
       {/* RIGHT — vitals / stats */}
       <aside className="eco-side eco-right">
-        <StatsDashboard detail={detail} project={project} onUpdated={onUpdated} onGoalSaved={patchDetail} />
+        <StatsDashboard detail={detail} project={project} isPublic={isPublic} onUpdated={onUpdated} onGoalSaved={patchDetail} />
       </aside>
     </div>
   )
@@ -419,7 +433,7 @@ function GoalEditor({
   )
 }
 
-function StatsDashboard({ detail, project, onUpdated, onGoalSaved }: { detail: ProjectDetail | null; project: ProjectState; onUpdated?: (p: ProjectState) => void; onGoalSaved: (p: Partial<ProjectState>) => void }) {
+function StatsDashboard({ detail, project, isPublic = false, onUpdated, onGoalSaved }: { detail: ProjectDetail | null; project: ProjectState; isPublic?: boolean; onUpdated?: (p: ProjectState) => void; onGoalSaved: (p: Partial<ProjectState>) => void }) {
   if (!detail) {
     return (
       <>
@@ -427,7 +441,7 @@ function StatsDashboard({ detail, project, onUpdated, onGoalSaved }: { detail: P
           <div className="eco-side-label">vitals</div>
           <RepoLink repo={project.repo} />
         </div>
-        <StageEditor project={project} onUpdated={onUpdated} />
+        {!isPublic && <StageEditor project={project} onUpdated={onUpdated} />}
         <div className="eco-side-empty">scanning…</div>
       </>
     )
@@ -450,14 +464,23 @@ function StatsDashboard({ detail, project, onUpdated, onGoalSaved }: { detail: P
         <RepoLink repo={project.repo} />
       </div>
 
-      <StageEditor project={project} onUpdated={onUpdated} />
+      {!isPublic && <StageEditor project={project} onUpdated={onUpdated} />}
 
-      <GoalEditor
-        project={project}
-        currentGoal={detail.project.goal}
-        onUpdated={onUpdated}
-        onGoalSaved={onGoalSaved}
-      />
+      {isPublic
+        ? (detail.project.goal && (
+            <div className="eco-stat-block">
+              <div className="eco-stat-block-label">goal</div>
+              <p className="eco-goal-readonly">{detail.project.goal}</p>
+            </div>
+          ))
+        : (
+          <GoalEditor
+            project={project}
+            currentGoal={detail.project.goal}
+            onUpdated={onUpdated}
+            onGoalSaved={onGoalSaved}
+          />
+        )}
 
       <div className="eco-stat-grid">
         <BigStat value={allCommits} label="commits" />
@@ -563,14 +586,14 @@ function fmtVal(v: unknown): string {
   return JSON.stringify(v)
 }
 
-function leafPos(branchAngle: number, leafIndex: number, leafCount: number): { x: number; y: number } {
-  const SPREAD = 0.36
-  const t = leafCount === 1 ? 0 : (leafIndex - (leafCount - 1) / 2) / ((leafCount - 1) / 2)
-  const a = branchAngle + t * SPREAD
-  const r = leafCount > 3 && leafIndex % 2 === 1 ? R_LEAF_FAR : R_LEAF_NEAR
-  return polar(a, r)
+function leafPos(branchAngle: number, leafIndex: number, _leafCount: number): { x: number; y: number } {
+  // Leaves stack straight out along the branch spoke (no sideways fan): each
+  // successive leaf sits one radius farther out, so they separate radially
+  // instead of colliding. (buildBranches caps each branch at 3 leaves.)
+  const r = R_LEAF_RADII[Math.min(leafIndex, R_LEAF_RADII.length - 1)]!
+  return polar(branchAngle, r)
 }
 
 function leafWidth(text: string): number {
-  return Math.max(110, Math.min(280, text.length * 9.2 + 24))
+  return Math.max(100, Math.min(210, text.length * 8.4 + 20))
 }

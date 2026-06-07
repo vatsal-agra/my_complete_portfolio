@@ -55,7 +55,7 @@ function fmtMetricValue(v: unknown): string {
   return JSON.stringify(v)
 }
 
-const TRUNC = 38
+const TRUNC = 30
 function trunc(s: string, n = TRUNC): string {
   if (s.length <= n) return s
   return s.slice(0, n - 1).trimEnd() + '…'
@@ -65,30 +65,20 @@ export function buildBranches(detail: ProjectDetail): Branch[] {
   const p = detail.project
   const { languages, tools } = splitTechStack(p.tech_stack)
 
-  // Latest changes — top 4 events of any type (newest first; events already
-  // come back newest-first from the API).
-  const latest = detail.events.slice(0, 4).map((e) => trunc(e.summary))
+  // Latest changes — top 3 events (newest first). Kept to 3 so the leaves
+  // don't crowd into neighbouring branches.
+  const latest = detail.events.slice(0, 3).map((e) => trunc(e.summary))
   const lastWhen = detail.events[0] ? relativeTime(detail.events[0].ts) : null
 
-  // Goal: project's north star. Split long goals into chunks for readability.
-  const goalItems: string[] = []
-  if (p.goal) {
-    const g = p.goal.trim()
-    if (g.length <= 80) goalItems.push(g)
-    else {
-      // Split by sentence ish
-      const parts = g.split(/[.;]\s+/).filter(Boolean).slice(0, 3)
-      goalItems.push(...parts.map((s) => trunc(s, 60)))
-    }
-  } else {
-    goalItems.push('— no goal set —')
-  }
+  // Goal: ONE leaf, truncated. The full goal shows in the stats panel — a
+  // single bubble keeps the mind-map clean (no goal split across bubbles).
+  const goalItems = [p.goal?.trim() ? trunc(p.goal.trim(), 64) : '— no goal set —']
 
-  // Stack tools (non-language).
-  const stackItems = tools.length > 0 ? tools.slice(0, 5) : ['— no tools listed —']
+  // Stack tools (non-language). Capped at 3 so the mind-map stays uncluttered.
+  const stackItems = tools.length > 0 ? tools.slice(0, 3) : ['— no tools listed —']
 
   // Languages.
-  const langItems = languages.length > 0 ? languages.slice(0, 4) : ['— none —']
+  const langItems = languages.length > 0 ? languages.slice(0, 3) : ['— none —']
 
   // Money.
   const spendByCurrency = Object.entries(detail.spend_summary.by_currency)
@@ -96,8 +86,8 @@ export function buildBranches(detail: ProjectDetail): Branch[] {
   let spendSubtitle: string | undefined
   if (spendByCurrency.length > 0) {
     spendSubtitle = spendByCurrency.map(([cur, amt]) => `${fmtMoney(amt)} ${cur}`).join(' · ')
-    const byCat = Object.entries(detail.spend_summary.by_category).sort((a, b) => b[1] - a[1]).slice(0, 3)
-    const byVendor = Object.entries(detail.spend_summary.by_vendor).sort((a, b) => b[1] - a[1]).slice(0, 2)
+    const byCat = Object.entries(detail.spend_summary.by_category).sort((a, b) => b[1] - a[1]).slice(0, 2)
+    const byVendor = Object.entries(detail.spend_summary.by_vendor).sort((a, b) => b[1] - a[1]).slice(0, 1)
     for (const [c, amt] of byCat) spendItems.push(`${c}: ${fmtMoney(amt)}`)
     for (const [v, amt] of byVendor) spendItems.push(`${v}: ${fmtMoney(amt)}`)
   } else {
@@ -106,7 +96,7 @@ export function buildBranches(detail: ProjectDetail): Branch[] {
 
   // Metrics.
   const metricItems = detail.metrics.length > 0
-    ? detail.metrics.slice(0, 5).map((m) => `${m.name}: ${fmtMetricValue(m.value)}${m.unit ? ' ' + m.unit : ''}`)
+    ? detail.metrics.slice(0, 3).map((m) => `${m.name}: ${fmtMetricValue(m.value)}${m.unit ? ' ' + m.unit : ''}`)
     : ['— no metrics yet —']
 
   return [

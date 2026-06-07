@@ -9,7 +9,7 @@
  */
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
+import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { publicApi } from '../lib/api'
 import { position3DFor, relaxPositions } from '../lib/position3d'
@@ -24,7 +24,8 @@ import { SearchBar } from './SearchBar'
 import { Radar } from './Radar'
 import { Scrubber } from './Scrubber'
 import { CameraRig, type CameraTarget } from './CameraRig'
-import { PublicProjectCard } from './PublicProjectCard'
+import { Ecosystem } from './Ecosystem'
+import { publicStateToProjectState } from '../lib/public-adapt'
 import type { ProjectState, ProjectEvent, PublicProjectState, PublicEvent } from '../lib/types'
 
 const START_CAM      = new THREE.Vector3(8, 55, 90)
@@ -32,28 +33,11 @@ const DEFAULT_CAM    = new THREE.Vector3(0, 22, 28)
 const DEFAULT_TARGET = new THREE.Vector3(0, 1, 0)
 const FOCUS_DISTANCE = 12
 const FOCUS_HEIGHT   = 6.5
+const BASE_HEIGHT    = 0.16  // keep in sync with House3D
 
-// Adapt the sanitized public shape to a ProjectState so the shared 3D pieces
-// (House3D, positioning, search) just work. Owner-only fields are nulled out.
-function asProjectState(p: PublicProjectState): ProjectState {
-  return {
-    id: p.slug,
-    slug: p.slug,
-    name: p.name,
-    category: p.category,
-    goal: p.goal,
-    repo: p.repo,
-    live_url: p.live_url,
-    tech_stack: p.tech_stack,
-    stage: p.stage,
-    manual_position: null,
-    created_at: p.created_at,
-    last_activity_ts: p.last_activity_ts,
-    status: p.status,
-    next_step: null,
-    commits_30d: p.commits_30d,
-    code_bytes: p.code_bytes,
-  }
+// Top-of-spire Y, used to anchor the Ecosystem panel above the cap (mirrors World3D).
+function dimsTopFor(height: number): number {
+  return BASE_HEIGHT + height + 0.4
 }
 
 export function PublicWorld() {
@@ -104,7 +88,7 @@ export function PublicWorld() {
     [events],
   )
 
-  const adapted = useMemo(() => (projects ?? []).map(asProjectState), [projects])
+  const adapted = useMemo(() => (projects ?? []).map(publicStateToProjectState), [projects])
 
   // Live, or re-derived at the scrubbed `asOf`.
   const displayProjects = useMemo(
@@ -176,6 +160,7 @@ export function PublicWorld() {
   }, [projects])
 
   const anyInterior = selected !== null
+  const selectedEntry = anyInterior ? positioned.find((e) => e.p.slug === selected) : null
 
   if (err) return <div className="full-error">could not load world: {err}</div>
   if (!projects) return <div className="loading">loading the world…</div>
@@ -226,6 +211,25 @@ export function PublicWorld() {
             />
           ))}
         </Suspense>
+
+        {/* Same Ecosystem the owner sees — anchored to the spire, read-only +
+            sanitized (no spend/metrics/editing). */}
+        {anyInterior && selectedEntry && (
+          <Html
+            position={[
+              selectedEntry.x,
+              groundYAt(selectedEntry.x, selectedEntry.z) + dimsTopFor(selectedEntry.height) + 1.2,
+              selectedEntry.z,
+            ]}
+            center
+            transform={false}
+            occlude={false}
+            zIndexRange={[30, 0]}
+            style={{ pointerEvents: 'auto' }}
+          >
+            <Ecosystem project={selectedEntry.p} onClose={recenter} isPublic />
+          </Html>
+        )}
       </Canvas>
 
       <div className="hud hud-tl">
@@ -245,8 +249,6 @@ export function PublicWorld() {
       />
       <Radar items={radarItems} controlsRef={controlsRef} onFocus={focusOn} matchSlugs={matchedSlugs} />
       <Scrubber projects={adapted} events={mappedEvents} asOf={asOf} setAsOf={setAsOf} />
-
-      {selected && <PublicProjectCard slug={selected} onClose={recenter} />}
 
       {lockedNotice && (
         <div className="locked-notice" onClick={(e) => e.stopPropagation()}>

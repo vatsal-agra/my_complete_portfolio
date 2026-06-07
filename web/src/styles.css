@@ -1498,6 +1498,9 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
 .eco-goal-btn:disabled { cursor: default; opacity: 0.6; }
 .eco-goal-btn.primary { background: #ffd9a0; color: #11131f; }
 
+/* Read-only goal shown in the public Ecosystem stats panel */
+.eco-goal-readonly { margin: 0.3rem 0 0; font-size: 13px; line-height: 1.5; color: #d8d4c4; }
+
 /* ---- Public view: owner link + project card ---- */
 .public-owner-link {
   font-size: 12px;
