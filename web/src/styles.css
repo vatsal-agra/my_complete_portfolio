@@ -1743,3 +1743,55 @@ textarea { resize: vertical; min-height: 4rem; font-family: var(--mono); font-si
   .search-bar { width: 70vw; top: 0.6rem; }
   .radar { width: 116px; height: 116px; }
 }
+
+/* ============================================================================
+   Mobile-only layout tightening. None of these rules touch desktop — every
+   change is gated behind a phone-width breakpoint. The goal: legible HUD,
+   reachable controls, no overlap, and a world the user can actually traverse
+   with one thumb.
+   ============================================================================ */
+@media (max-width: 520px) {
+  /* Radar — smaller, tucked into the corner so it doesn't sit on top of the
+     bottom-of-screen scrubber/ticker stack. */
+  .radar {
+    width: 92px;
+    height: 92px;
+    left: 0.6rem;
+    top: auto;
+    bottom: 6.5rem;  /* sits above ticker + scrubber */
+  }
+
+  /* HUD action buttons (right side): tighter padding + smaller text. The label
+     row drops the title, leaving just the project count. */
+  .hud-tr { right: 0.6rem; gap: 0.2rem; flex-wrap: wrap; justify-content: flex-end; max-width: 64vw; }
+  .hud-tl { left: 0.6rem; }
+  .hud button { padding: 0.28rem 0.45rem; font-size: 11px; }
+  /* Drop the "zoom 1.00×" indicator on phone — it isn't useful with touch
+     gestures and just bloats the top-left count chip into the right-edge
+     button row. */
+  .hud-zoom { display: none; }
+
+  /* Legend — when expanded, fits the right edge tightly. Default state is
+     collapsed (handled in Legend.tsx). Top offset clears the dropped-down
+     search bar above it. */
+  .legend { width: 200px; top: 6.4rem; right: 0.6rem; }
+  .legend-row { grid-template-columns: 56px 1fr; }
+  .legend-stages li { grid-template-columns: 10px 50px 1fr; }
+  .legend-stage-hint { display: none; }  /* hide the hint column on tiny screens */
+
+  /* Scrubber — sits flat to the bottom edges with less padding. Ticker
+     squeezes in just below. */
+  .world-3d .scrubber { left: 0.6rem; right: 0.6rem; bottom: 2.6rem; padding: 0.3rem 0.5rem; gap: 0.4rem; }
+  .world-3d .ticker  { left: 0; right: 0; bottom: 0; }
+
+  /* WorldSpend — owner-only header strip; on mobile it's noise. Hide it. */
+  .world-spend { display: none; }
+
+  /* Search bar — drop it below the HUD strip so it doesn't collide
+     horizontally with the action buttons on the right. */
+  .search-bar { width: 84vw; max-width: 320px; top: 2.8rem; }
+
+  /* Lock notice (private-tower modal) — center it without bumping into the
+     edges. Used in the public view. */
+  .locked-notice { width: 86vw; max-width: 320px; }
+}

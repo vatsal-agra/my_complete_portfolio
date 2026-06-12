@@ -16,7 +16,12 @@ const STAGES: { key: keyof typeof STAGE_COLOR; label: string; hint: string }[] =
 ]
 
 export function Legend() {
-  const [open, setOpen] = useState(true)
+  // Collapsed by default on phones — on a 380px viewport, the expanded legend
+  // covers a big chunk of usable space. Desktop is unchanged (open by default).
+  const [open, setOpen] = useState(() => {
+    if (typeof window === 'undefined') return true
+    return !window.matchMedia('(pointer: coarse), (max-width: 600px)').matches
+  })
 
   return (
     <div className={`legend${open ? '' : ' collapsed'}`}>

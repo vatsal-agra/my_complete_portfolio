@@ -26,6 +26,7 @@ import { Scrubber } from './Scrubber'
 import { CameraRig, type CameraTarget } from './CameraRig'
 import { Ecosystem } from './Ecosystem'
 import { publicStateToProjectState } from '../lib/public-adapt'
+import { isCoarsePointer } from '../lib/device'
 import type { ProjectState, ProjectEvent, PublicProjectState, PublicEvent } from '../lib/types'
 
 const START_CAM      = new THREE.Vector3(8, 55, 90)
@@ -187,7 +188,9 @@ export function PublicWorld() {
           keyPanSpeed={28}
           screenSpacePanning={false}
           mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }}
-          touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE }}
+          touches={isCoarsePointer()
+            ? { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }
+            : { ONE: THREE.TOUCH.PAN,    TWO: THREE.TOUCH.DOLLY_ROTATE }}
           keys={{ LEFT: 'KeyA', UP: 'KeyW', RIGHT: 'KeyD', BOTTOM: 'KeyS' }}
           listenToKeyEvents={typeof window !== 'undefined' ? window : undefined}
           makeDefault

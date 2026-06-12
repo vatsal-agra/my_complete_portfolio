@@ -71,7 +71,11 @@ export function Radar({
 
   return (
     <div className="radar">
-      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
+      {/* Fluid SVG — fills whatever size the .radar container has so the
+          mobile breakpoint (which shrinks the box) doesn't clip a 150px SVG
+          into a 116px container. ViewBox stays 150×150 so all the internal
+          coords keep working unchanged. */}
+      <svg width="100%" height="100%" viewBox={`0 0 ${SIZE} ${SIZE}`} preserveAspectRatio="xMidYMid meet">
         {/* dish */}
         <circle cx={C} cy={C} r={RADAR_R} className="radar-dish" />
         <circle cx={C} cy={C} r={RADAR_R * 0.6} className="radar-ring" />

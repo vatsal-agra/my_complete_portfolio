@@ -80,7 +80,7 @@ export function HUD({ scale, count, onRecenter, onAddProject, onLogout }: Props)
     <>
       <div className="hud hud-tl">
         <span className="hud-label">Vatsal's Project World</span>
-        <span className="hud-meta">{count} projects · zoom {scale.toFixed(2)}×</span>
+        <span className="hud-meta">{count} projects<span className="hud-zoom"> · zoom {scale.toFixed(2)}×</span></span>
       </div>
       <div className="hud hud-tr">
         <button onClick={onAddProject} title="Plant a new project (n)">+ new</button>

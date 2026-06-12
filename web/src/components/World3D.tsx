@@ -16,6 +16,7 @@ import { api } from '../lib/api'
 import { position3DFor, relaxPositions } from '../lib/position3d'
 import { groundYAt } from '../lib/globe'
 import { computeHeight, spireRadii, type ProjectActivity } from '../lib/dimensions'
+import { isCoarsePointer } from '../lib/device'
 import { deriveProjectsAt } from '../lib/derive'
 import { Scene3D } from './Scene3D'
 import { House3D, STAGE_COLOR } from './House3D'
@@ -319,10 +320,14 @@ export function World3D({ onLogout }: { onLogout: () => void }) {
             MIDDLE: THREE.MOUSE.DOLLY,
             RIGHT:  THREE.MOUSE.ROTATE,
           }}
-          touches={{
-            ONE: THREE.TOUCH.PAN,
-            TWO: THREE.TOUCH.DOLLY_ROTATE,
-          }}
+          // On touch devices a globe feels natural to *spin* with one finger;
+          // PAN with one finger leaves no easy way to look around without
+          // committing to a two-finger gesture. Phones get ROTATE on one
+          // finger + DOLLY_PAN on two; desktops keep PAN / DOLLY_ROTATE so
+          // pinch-zoom on touch laptops still feels Earth-like.
+          touches={isCoarsePointer()
+            ? { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }
+            : { ONE: THREE.TOUCH.PAN,    TWO: THREE.TOUCH.DOLLY_ROTATE }}
           // Arrow keys + WASD pan along the ground plane.
           keys={{ LEFT: 'KeyA', UP: 'KeyW', RIGHT: 'KeyD', BOTTOM: 'KeyS' }}
           listenToKeyEvents={typeof window !== 'undefined' ? window : undefined}
